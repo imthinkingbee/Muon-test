@@ -1,23 +1,37 @@
 # Muon-test: LED cover opacity test
 
-`ring_test.py` lights the muon detector's 16×16 NeoPixel panel **one concentric ring at a
-time**, stepping from the centre out to the corners every **0.75 s**, so a 3D-printed cover
-can be judged for opacity and diffusion:
+`ring_test.py` drops **muon ripples** into the centre of the muon detector's 16×16 NeoPixel
+panel, animated exactly like the **Muon Ripple** artifact: a bright splash where the drop
+lands, then a ring that spreads out and fades, like a drop in a lake. It's for judging a
+3D-printed cover's opacity and diffusion with the real animation behind it:
 
 - Do single LEDs show through as hotspots?
-- How far does one ring's light spread under the cover?
-- Does one lit ring still read as one clean ring?
+- Does the moving ring stay crisp, or smear into a glow?
+- Do the dim tail of the ring and the fade-out still show through?
 
-Colours come from the **Muon Ripple** panel design:
+![ripples](docs/ripples.gif)
+
+Every drop works the way it does in Muon Ripple:
+
+- **Timing:** drops arrive at random times, 0.4 per second on average ("gallery pace").
+  `--rate 1.7` gives the real sea-level muon rate.
+- **Animation:** the ring spreads at 90 mm/s (9 LEDs per second), is 11 mm wide, and fades
+  over about 1.6 s. It reaches the corners in about 1.2 s. The splash at the centre dies away
+  in about 0.25 s.
+- **Brightness and colour:** each drop gets a simulated muon energy. Most are 6–15 MeV, about
+  9 MeV typical, and that sets how bright the drop is. About 7 % of drops are over 15.5 MeV
+  and get the scheme's **rare** colour.
+
+The colour scheme changes on **every drop**: warm → cool → pride → warm …
 
 | Scheme | Typical | Rare |
 |---|---|---|
 | warm | `#dfe9ff` | `#ffb04a` |
 | cool | `#6fd8ff` | `#b996ff` |
-| pride | one stripe per ring: `#ff3b3b` `#ff9a1f` `#ffe733` `#2fd16a` `#3d7bff` `#b05cff` | |
+| pride | the next stripe: `#ff3b3b` `#ff9a1f` `#ffe733` `#2fd16a` `#3d7bff` `#b05cff` | a full rainbow round the ring |
 
-Warm and cool rings alternate the typical and rare colours from one ring to the next. The
-design's fourth scheme, "bloody", is a splatter, not rings, so it's left out.
+Pride ripples also throw off white glitter where the ring passes, as in the artifact. The
+artifact's fourth scheme, "bloody", is a splatter, not a ripple, so it's left out.
 
 ## Hardware
 
@@ -64,8 +78,8 @@ asks before anything big, and uses `sudo` only for system changes.
 
 If it stops and says reboot, reboot and run `./quickstart.sh` again.
 
-Anything after `./quickstart.sh` is passed to the test, e.g. `./quickstart.sh --hold 2` or
-`./quickstart.sh --start 23`. Use `./quickstart.sh --setup-only` to set up without running.
+Anything after `./quickstart.sh` is passed to the test, e.g. `./quickstart.sh --rate 1.7` or
+`./quickstart.sh --brightness 0.25`. Use `./quickstart.sh --setup-only` to set up without running.
 
 ## Pi 5 setup by hand (what quickstart.sh does)
 
@@ -113,16 +127,21 @@ source .venv/bin/activate
 python3 ring_test.py
 ```
 
-The script loops until **Ctrl+C**, which turns the panel off. Each step is printed with its
-number, so you can write down how the cover looked for each ring.
+The script runs until **Ctrl+C**, which turns the panel off. Each drop is logged as it lands,
+so you can match what you saw through the cover to the drop:
+
+```
+drop    1 | warm  | typical |   9.0 MeV | brightness x1.16
+drop    2 | cool  | typical |   6.8 MeV | brightness x0.88
+drop    3 | pride | rare    |  17.2 MeV | brightness x1.60
+```
 
 | Option | Default | What it does |
 |---|---|---|
-| `--hold SECONDS` | `0.75` | how long each ring stays lit |
-| `--brightness B` | `1.0` | brightness from 0 to 1 (e.g. `0.25`) |
-| `--start N` | `1` | start at step *N* (see `--list`) |
-| `--once` | off | run through the sequence once, then stop |
-| `--list` | | print all 33 steps and exit |
+| `--rate R` | `0.4` | average drops per second, at random times. `1.7` = sea level. |
+| `--brightness B` | `1.0` | overall brightness from 0 to 1 (e.g. `0.25`) |
+| `--duration S` | `0` | stop after *S* seconds (`0` = run until Ctrl+C) |
+| `--seed N` | random | repeat exactly the same run of drops (handy for comparing two covers) |
 | `--max-amps A` | `3.5` | panel current limit (see below) |
 | `--pin N` | `18` | BCM GPIO number of the data line |
 | `--layout` | `serpentine` | `progressive` if your panel's rows all run the same way |
@@ -131,49 +150,32 @@ number, so you can write down how the cover looked for each ring.
 Examples:
 
 ```bash
-python3 ring_test.py --list                 # see the sequence
-python3 ring_test.py --hold 3               # more time to look at each ring
-python3 ring_test.py --start 23             # jump straight to the pride sweep
+python3 ring_test.py --rate 1.7             # real sea-level muon rate
 python3 ring_test.py --brightness 0.25      # dimmer, to see when light stops getting through
+python3 ring_test.py --seed 42              # same drops every time: swap covers and compare
 python3 ring_test.py --preview              # try it out without the panel
 ```
-
-## The sequence (33 steps, about 25 s per loop)
-
-One ring lit at a time, centre outwards, one full sweep per colour scheme:
-
-| # | Scheme |
-|---|---|
-| 1–11 | warm, rings 0 → 10 |
-| 12–22 | cool, rings 0 → 10 |
-| 23–33 | pride, rings 0 → 10 |
-
-Ring 0 is the middle 4 LEDs. The rings grow outwards, and rings 8–10 are cut off by the
-panel's square edge, so they show up as arcs near the corners. Ring 10 is just the 4 corner
-LEDs.
-
-| Ring | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| LEDs | 4 | 8 | 20 | 20 | 28 | 32 | 44 | 52 | 24 | 20 | 4 |
-
-The timing is held on a fixed schedule, so each ring really gets 0.75 s however long the
-frame took to send.
 
 ### Brightness and the power limit
 
 At full white, 256 NeoPixels can draw around 15 A, and a 4 A supply can't deliver that. The
 script estimates each frame's current conservatively (20 mA per colour channel at full,
 1 mA idle per LED), and if a frame would go over `--max-amps` (3.5 A, leaving headroom on a
-4 A supply) it dims that frame just enough to fit and logs `POWER-LIMITED`.
+4 A supply) it dims that frame just enough to fit and logs `POWER-LIMITED` (at most once a
+second).
 
-With one ring at a time this never actually triggers. The biggest ring (ring 7, 52 LEDs)
-comes to about 2.7 A at full brightness. The limit is there as a safety net. If you use a
-bigger supply, raise `--max-amps` to about 90 % of its rating.
+- At the default 0.4 drops/s this almost never happens: under 1 % of frames, when two bright
+  drops overlap, and only briefly.
+- At `--rate 1.7`, drops overlap more and about 1 frame in 7 gets dimmed a little.
+
+If you use a bigger supply, raise `--max-amps` to about 90 % of its rating.
 
 ## Notes
 
-- The rings are centred between the four middle LEDs and are mirror-symmetric, so they look
-  the same whichever corner the data enters and whichever way the rows run.
+- The ripples land between the four middle LEDs and spread symmetrically, so they look the
+  same whichever corner the data enters and whichever way the rows run. (In the artifact, a
+  drop lands wherever the muon hit. Here every drop lands in the centre.)
+- Frames are sent at about 50 per second, and each one takes a few milliseconds to work out.
 - Adafruit's Pi 5 NeoPixel examples use `byteorder="BGR"`. The driver sends bytes in buffer
   order, so for standard GRB NeoPixels that swaps red and blue. Their rainbow demos hide it.
   This script writes GRB directly.

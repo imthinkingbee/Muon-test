@@ -1,34 +1,46 @@
 #!/usr/bin/env python3
-"""Concentric-ring opacity test for the muon detector's 16x16 NeoPixel panel.
+"""Concentric-ripple opacity test for the muon detector's 16x16 NeoPixel panel.
 
-Lights one concentric ring at a time, stepping from the centre out to the
-corners, so a 3D-printed cover can be judged for opacity / diffusion: whether
-single LEDs show through as hotspots, how far each ring's light spreads under
-the cover, and whether one ring reads as one clean ring.
+Drops "muon ripples" into the centre of the panel, animated the same way as
+the "Muon Ripple" panel design, so a 3D-printed cover can be judged for
+opacity / diffusion with the real animation behind it: whether single LEDs
+show through as hotspots, and whether the moving rings stay crisp.
 
-Each ring stays lit for 0.75 s (--hold). One sweep runs in each colour scheme
-from the "Muon Ripple" panel design, then the whole sequence repeats:
-  warm  rings alternate typical #dfe9ff and rare #ffb04a
-  cool  rings alternate typical #6fd8ff and rare #b996ff
-  pride one stripe per ring: #ff3b3b #ff9a1f #ffe733 #2fd16a #3d7bff #b05cff
+Each drop, as in Muon Ripple:
+  - lands with a bright core that dies away in ~0.25 s
+  - sends a ring outwards at 90 mm/s (9 LEDs/s), 11 mm wide, fading over ~1.6 s
+  - gets a simulated muon energy (cos^3 zenith track through the 10x10x3.81 cm
+    slab, Landau-like loss) that sets its brightness, and its colour:
+    typical, or rare above 15.5 MeV
+  - arrives at random (Poisson) times, 0.4 per second on average ("gallery
+    pace"); --rate 1.7 gives the sea-level muon rate
+
+The colour scheme changes on every drop, warm -> cool -> pride -> warm ...
+  warm  typical #dfe9ff, rare #ffb04a
+  cool  typical #6fd8ff, rare #b996ff
+  pride typical: the next stripe of #ff3b3b #ff9a1f #ffe733 #2fd16a #3d7bff #b05cff,
+        rare: a full rainbow round the ring; pride rings also throw off glitter
 
 Hardware: Raspberry Pi 5, data on GPIO18 (header pin 12) by default, panel on
 its own 5 V supply. Drives the LEDs with Adafruit's Pi 5 PIO driver
 (pip install Adafruit-Blinka-Raspberry-Pi5-Neopixel). See README.md.
 
-Run `python3 ring_test.py --preview` on any computer to see the rings in
+Run `python3 ring_test.py --preview` on any computer to see the ripples in
 the terminal without a panel attached.
 """
 
 import argparse
 import math
+import random
 import signal
 import sys
 import time
 
 # ---- panel ------------------------------------------------------------------
 N = 16                       # 16 x 16 LEDs
-CENTRE = (N - 1) / 2         # 7.5: the rings are centred between the 4 middle LEDs
+CENTRE = (N - 1) / 2         # 7.5: ripples land between the 4 middle LEDs
+PITCH = 10.0                 # mm between LEDs
+FPS = 50
 
 # ---- power model (WS2812B, conservative) ------------------------------------
 MA_PER_CHANNEL = 20.0        # mA per colour channel at 255 (~60 mA per LED at full white)
@@ -43,13 +55,121 @@ PRIDE = [(255, 59, 59), (255, 154, 31), (255, 231, 51),
          (47, 209, 106), (61, 123, 255), (176, 92, 255)]
 SCHEME_ORDER = ["warm", "cool", "pride"]
 
+# ---- ripple (Muon Ripple design; mm and s) -------------------------------------
+RING_V, RING_W, FADE = 90.0, 11.0, 1.6     # ring speed mm/s, width mm, fade s
+LIFE = FADE * 2.2                          # s, a ripple is dropped after this
+EDGE = 230.0                               # mm, ring strength falls linearly to 0 here
+CORE_R, CORE_T = 8.0, 0.25                 # impact core: radius mm, decay s
 
-def ring_index(x, y):
-    """Concentric ring number of LED (x, y): 0 for the middle 4 LEDs, up to 10 at the corners."""
-    return int(math.hypot(x - CENTRE, y - CENTRE))
+# ---- muon energy (Muon Ripple design) -------------------------------------------
+HALF, HZ = 50.0, 19.05                     # slab half-width and half-thickness, mm
+MUON_PEAK = 8.6                            # MeV
+FULL, HOT = 0.9 * MUON_PEAK, 1.8 * MUON_PEAK   # full brightness / rare colour from here
+
+# ---- glitter on pride ripples (Muon Ripple design) ------------------------------
+GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "peak": 230, "tint": 0.35}
 
 
-RINGS = sorted({ring_index(x, y) for y in range(N) for x in range(N)})   # 0..10
+def muon_energy(rng):
+    """Energy (MeV) a cosmic muon leaves in the slab: cos^3 zenith direction, random entry
+    point, path length through the slab (corner clippers included), Landau-like spread."""
+    cz = (1.0 - rng.random()) ** 0.25          # (0, 1], never 0
+    sz = math.sqrt(1 - cz * cz)
+    phi = 2 * math.pi * rng.random()
+    dx, dy = sz * math.cos(phi) / cz, sz * math.sin(phi) / cz
+    xm, ym = (rng.random() * 2 - 1) * HALF, (rng.random() * 2 - 1) * HALF
+    inside = 0
+    for k in range(21):
+        z = -HZ + k * HZ / 10
+        if abs(xm + dx * z) <= HALF and abs(ym + dy * z) <= HALF:
+            inside += 1
+    path = inside * math.sqrt(1 + dx * dx + dy * dy) * (2 * HZ / 20) / 10   # cm
+    g = rng.gauss(0.0, 1.0)
+    lam = -math.log(g * g + 1e-12)
+    return 1.8 * path * max(0.3, 1 + 0.12 * lam)
+
+
+def hsv(h):
+    """Full-saturation hue 0..1 -> (r, g, b) 0..255."""
+    def f(n):
+        k = (n + h * 6) % 6
+        return 255 * (1 - max(0, min(k, 4 - k, 1)))
+    return (f(5), f(3), f(1))
+
+
+# LED centres in mm from the middle of the panel (y up), and each one's distance
+# and pride-rainbow colour; fixed, so worked out once.
+LEDS = []
+for _j in range(N):
+    for _i in range(N):
+        _x, _y = (_i - CENTRE) * PITCH, (CENTRE - _j) * PITCH
+        _h = (math.atan2(_y, _x) / (2 * math.pi) + 1) % 1
+        LEDS.append((_i, _j, math.hypot(_x, _y), hsv(_h)))
+
+
+class Drop:
+    def __init__(self, t0, scheme, energy, stripe):
+        self.t0, self.scheme, self.e = t0, scheme, energy
+        self.hot = energy > HOT
+        self.amp = min(1.6, energy / FULL)
+        self.stripe = stripe
+
+    def colour(self, rainbow):
+        if self.scheme == "pride":
+            return rainbow if self.hot else PRIDE[self.stripe]
+        s = SCHEMES[self.scheme]
+        return s["hot"] if self.hot else s["typ"]
+
+
+class Ripples:
+    """The panel's light field: active drops plus pride glitter, as Muon Ripple draws them."""
+
+    def __init__(self, rng):
+        self.rng = rng
+        self.drops = []
+        self.sparkles = []       # [led, t0, colour, strength]
+        self.last = None
+
+    def add(self, drop):
+        self.drops.append(drop)
+
+    def frame(self, now):
+        """Returns frame[y][x] = [r, g, b] (may exceed 255; clipped on output)."""
+        dt = 0.0 if self.last is None else min(0.1, now - self.last)
+        self.last = now
+        px = [[[0.0, 0.0, 0.0] for _ in range(N)] for _ in range(N)]
+        self.drops = [d for d in self.drops if now - d.t0 <= LIFE]
+        for d in self.drops:
+            t = now - d.t0
+            fade = math.exp(-t / (FADE / 2.2))
+            r0 = RING_V * t
+            core_t = math.exp(-t / CORE_T)
+            glitter = d.scheme == "pride"
+            for n, (i, j, dist, rainbow) in enumerate(LEDS):
+                ring = math.exp(-(((dist - r0) / RING_W) ** 2))
+                core = math.exp(-((dist / CORE_R) ** 2)) * core_t
+                edge = 1 - min(1.0, dist / EDGE)
+                v = d.amp * fade * (ring * edge + core)
+                col = d.colour(rainbow)
+                p = px[j][i]
+                p[0] += v * col[0]
+                p[1] += v * col[1]
+                p[2] += v * col[2]
+                if glitter:
+                    g = d.amp * fade * (ring + (GLITTER["wake"] if dist < r0 else 0)) * edge
+                    if g > 0.05 and self.rng.random() < GLITTER["rate"] * (1.5 if d.hot else 1) * g * dt:
+                        c = tuple((1 - GLITTER["tint"]) * 245 + GLITTER["tint"] * ch for ch in col)
+                        self.sparkles.append([n, now, c, 0.6 + 0.4 * self.rng.random()])
+        self.sparkles = [s for s in self.sparkles if now - s[1] <= GLITTER["life"]]
+        for n, t0, c, strength in self.sparkles:
+            t = now - t0
+            env = (t / GLITTER["rise"] if t < GLITTER["rise"]
+                   else math.exp(-(t - GLITTER["rise"]) / GLITTER["tau"])) * strength
+            i, j = LEDS[n][0], LEDS[n][1]
+            p = px[j][i]
+            for k in range(3):
+                p[k] += env * GLITTER["peak"] / 255 * c[k]
+        return px
 
 
 def xy_to_index(x, y, layout):
@@ -59,24 +179,9 @@ def xy_to_index(x, y, layout):
     return y * N + x
 
 
-def ring_colour(scheme, ring):
-    """Colour of a ring: warm/cool alternate typical and rare, pride takes the next stripe."""
-    if scheme == "pride":
-        return PRIDE[ring % len(PRIDE)]
-    s = SCHEMES[scheme]
-    return s["typ"] if ring % 2 == 0 else s["hot"]
-
-
-def ring_frame(scheme, ring):
-    """Only the given ring lit; returns frame[y][x] = (r, g, b) 0..255."""
-    colour = ring_colour(scheme, ring)
-    return [[colour if ring_index(x, y) == ring else (0, 0, 0) for x in range(N)]
-            for y in range(N)]
-
-
 def current_amps(frame, level):
     """Estimated panel current for a frame shown at a brightness level."""
-    total = sum(c for row in frame for px in row for c in px)
+    total = sum(min(255.0, c) for row in frame for px in row for c in px)
     return (N * N * MA_IDLE_PER_LED + MA_PER_CHANNEL * level * total / 255.0) / 1000.0
 
 
@@ -147,47 +252,38 @@ class TerminalPreview:
         self.drawn = False
 
 
-# ---- sequence ------------------------------------------------------------------
-def build_sequence():
-    return [{"scheme": scheme, "ring": ring, "label": f"ring {ring:2d} | {scheme}"}
-            for scheme in SCHEME_ORDER for ring in RINGS]
-
-
 def log(msg, out):
     # In preview the panel is redrawn in place, so logs go to stderr to keep it tidy.
     print(msg, file=sys.stderr if isinstance(out, TerminalPreview) else sys.stdout, flush=True)
 
 
 def main():
-    p = argparse.ArgumentParser(description="One-ring-at-a-time opacity test for a 16x16 NeoPixel panel on a Pi 5.")
-    p.add_argument("--hold", type=float, default=0.75, help="seconds each ring stays lit (default 0.75)")
+    p = argparse.ArgumentParser(description="Muon-ripple opacity test for a 16x16 NeoPixel panel on a Pi 5.")
+    p.add_argument("--rate", type=float, default=0.4,
+                   help="average drops per second, at random times (default 0.4 'gallery pace'; 1.7 = sea level)")
     p.add_argument("--brightness", type=float, default=1.0, help="brightness 0..1 (default 1.0)")
+    p.add_argument("--duration", type=float, default=0, help="stop after this many seconds (default 0 = run until Ctrl+C)")
     p.add_argument("--pin", type=int, default=18, help="BCM GPIO number of the data line (default 18 = header pin 12)")
     p.add_argument("--max-amps", type=float, default=3.5,
-                   help="panel current limit in A; rings are dimmed to stay under it (default 3.5, for a 5 V 4 A supply)")
+                   help="panel current limit in A; frames are dimmed to stay under it (default 3.5, for a 5 V 4 A supply)")
     p.add_argument("--layout", choices=["serpentine", "progressive"], default="serpentine",
                    help="data-chain wiring of the matrix (default serpentine, as on Adafruit's 16x16)")
-    p.add_argument("--start", type=int, default=1, help="step number to start from (see --list)")
-    p.add_argument("--once", action="store_true", help="run the sequence once instead of looping")
-    p.add_argument("--list", action="store_true", help="print the sequence and exit")
+    p.add_argument("--seed", type=int, default=None, help="random seed, to repeat the same run of drops")
     p.add_argument("--preview", action="store_true", help="draw in the terminal instead of driving the panel")
     args = p.parse_args()
 
-    seq = build_sequence()
-    if args.list:
-        for n, step in enumerate(seq, 1):
-            print(f"{n:3d}  {step['label']}")
-        return
-    if not 1 <= args.start <= len(seq):
-        p.error(f"--start must be 1..{len(seq)}")
-    if args.hold <= 0:
-        p.error("--hold must be positive")
+    if args.rate <= 0:
+        p.error("--rate must be positive")
     if not 0 < args.brightness <= 1:
         p.error("--brightness must be above 0 and at most 1")
+    if args.duration < 0:
+        p.error("--duration can't be negative")
     if args.max_amps <= N * N * MA_IDLE_PER_LED / 1000.0:
         p.error(f"--max-amps must be above the panel's idle draw ({N * N * MA_IDLE_PER_LED / 1000.0:.2f} A)")
 
+    rng = random.Random(args.seed)
     out = TerminalPreview() if args.preview else Panel(args.pin)
+    field = Ripples(rng)
 
     # systemd / kill send SIGTERM; turn it into the same clean exit as Ctrl+C.
     def stop(signum, _frame):
@@ -195,25 +291,30 @@ def main():
     signal.signal(signal.SIGTERM, stop)
 
     try:
-        first = args.start - 1
-        deadline = time.monotonic()
+        start = time.monotonic()
+        next_drop = start            # the first drop lands straight away
+        count, stripe, last_limit_log = 0, 0, -1.0
         while True:
-            for n in range(first, len(seq)):
-                step = seq[n]
-                frame = ring_frame(step["scheme"], step["ring"])
-                level = args.brightness * power_scale(frame, args.brightness, args.max_amps)
-                note = ""
-                if level < args.brightness:
-                    note = f"  POWER-LIMITED: shown at {level:.0%} instead of {args.brightness:.0%}"
-                log(f"[{n + 1}/{len(seq)}] {step['label']}{note}", out)
-                out.show(frame, level, args.layout)
-                # Step on a fixed schedule so the cycle stays at --hold, however long show() took.
-                # If we fell behind (Pi busy), resync rather than rush through rings to catch up.
-                deadline = max(deadline + args.hold, time.monotonic())
-                time.sleep(max(0.0, deadline - time.monotonic()))
-            first = 0
-            if args.once:
+            now = time.monotonic()
+            if args.duration and now - start >= args.duration:
                 break
+            if now >= next_drop:
+                scheme = SCHEME_ORDER[count % len(SCHEME_ORDER)]
+                drop = Drop(now, scheme, muon_energy(rng), stripe % len(PRIDE))
+                if scheme == "pride":
+                    stripe += 1
+                field.add(drop)
+                count += 1
+                log(f"drop {count:4d} | {scheme:5s} | {'rare' if drop.hot else 'typical':7s} | "
+                    f"{drop.e:5.1f} MeV | brightness x{drop.amp:.2f}", out)
+                next_drop = now + rng.expovariate(args.rate)
+            frame = field.frame(now)
+            level = args.brightness * power_scale(frame, args.brightness, args.max_amps)
+            if level < args.brightness and now - last_limit_log >= 1.0:
+                log(f"  POWER-LIMITED: dimmed to {level:.0%} to stay under {args.max_amps} A", out)
+                last_limit_log = now
+            out.show(frame, level, args.layout)
+            time.sleep(max(0.0, 1.0 / FPS - (time.monotonic() - now)))
     except KeyboardInterrupt:
         pass
     finally:
