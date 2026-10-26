@@ -2,7 +2,7 @@
 # One-command setup + run for the LED cover opacity test on a Raspberry Pi 5.
 #
 #   ./quickstart.sh                 set up anything missing, then run the test
-#   ./quickstart.sh --hold 15       anything after the script name goes to ring_test.py
+#   ./quickstart.sh --hold 2        anything after the script name goes to ring_test.py
 #   ./quickstart.sh --setup-only    set up, don't run
 #
 # Safe to run again: each step is skipped once it's done. It asks before

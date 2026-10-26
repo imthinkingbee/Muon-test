@@ -1,14 +1,14 @@
 # Muon-test: LED cover opacity test
 
-`ring_test.py` cycles the muon detector's 16×16 NeoPixel panel through concentric-ring
-patterns so a 3D-printed cover can be judged for opacity and diffusion:
+`ring_test.py` lights the muon detector's 16×16 NeoPixel panel **one concentric ring at a
+time**, stepping from the centre out to the corners every **0.75 s**, so a 3D-printed cover
+can be judged for opacity and diffusion:
 
 - Do single LEDs show through as hotspots?
-- Do neighbouring rings stay distinguishable, or do they blur together?
-- How much light gets through at lower brightness?
-- Does the expanding ripple still read clearly through the cover?
+- How far does one ring's light spread under the cover?
+- Does one lit ring still read as one clean ring?
 
-Colours and the ripple animation come from the **Muon Ripple** panel design:
+Colours come from the **Muon Ripple** panel design:
 
 | Scheme | Typical | Rare |
 |---|---|---|
@@ -16,7 +16,8 @@ Colours and the ripple animation come from the **Muon Ripple** panel design:
 | cool | `#6fd8ff` | `#b996ff` |
 | pride | one stripe per ring: `#ff3b3b` `#ff9a1f` `#ffe733` `#2fd16a` `#3d7bff` `#b05cff` | |
 
-The design's fourth scheme, "bloody", is a splatter, not rings, so it's left out.
+Warm and cool rings alternate the typical and rare colours from one ring to the next. The
+design's fourth scheme, "bloody", is a splatter, not rings, so it's left out.
 
 ## Hardware
 
@@ -63,8 +64,8 @@ asks before anything big, and uses `sudo` only for system changes.
 
 If it stops and says reboot, reboot and run `./quickstart.sh` again.
 
-Anything after `./quickstart.sh` is passed to the test, e.g. `./quickstart.sh --hold 15` or
-`./quickstart.sh --start 37`. Use `./quickstart.sh --setup-only` to set up without running.
+Anything after `./quickstart.sh` is passed to the test, e.g. `./quickstart.sh --hold 2` or
+`./quickstart.sh --start 23`. Use `./quickstart.sh --setup-only` to set up without running.
 
 ## Pi 5 setup by hand (what quickstart.sh does)
 
@@ -112,15 +113,16 @@ source .venv/bin/activate
 python3 ring_test.py
 ```
 
-The script loops until **Ctrl+C**, which turns the panel off. Each configuration is printed
-with its number, so you can write down how the cover looked for each one.
+The script loops until **Ctrl+C**, which turns the panel off. Each step is printed with its
+number, so you can write down how the cover looked for each ring.
 
 | Option | Default | What it does |
 |---|---|---|
-| `--hold SECONDS` | `8` | how long each configuration stays up |
-| `--start N` | `1` | start at configuration *N* (see `--list`) |
+| `--hold SECONDS` | `0.75` | how long each ring stays lit |
+| `--brightness B` | `1.0` | brightness from 0 to 1 (e.g. `0.25`) |
+| `--start N` | `1` | start at step *N* (see `--list`) |
 | `--once` | off | run through the sequence once, then stop |
-| `--list` | | print all 42 configurations and exit |
+| `--list` | | print all 33 steps and exit |
 | `--max-amps A` | `3.5` | panel current limit (see below) |
 | `--pin N` | `18` | BCM GPIO number of the data line |
 | `--layout` | `serpentine` | `progressive` if your panel's rows all run the same way |
@@ -130,41 +132,43 @@ Examples:
 
 ```bash
 python3 ring_test.py --list                 # see the sequence
-python3 ring_test.py --hold 15              # more time to look at each configuration
-python3 ring_test.py --start 37             # jump straight to the ripples
-python3 ring_test.py --preview --hold 2     # try it out without the panel
+python3 ring_test.py --hold 3               # more time to look at each ring
+python3 ring_test.py --start 23             # jump straight to the pride sweep
+python3 ring_test.py --brightness 0.25      # dimmer, to see when light stops getting through
+python3 ring_test.py --preview              # try it out without the panel
 ```
 
-## The sequence (42 configurations)
+## The sequence (33 steps, about 25 s per loop)
 
-Static rings, each in warm, cool and pride, at 100 %, 50 % and 25 % brightness:
+One ring lit at a time, centre outwards, one full sweep per colour scheme:
 
-| # | Pattern | What it tests |
-|---|---|---|
-| 1–9 | thin rings, 1 on / 1 off | can the cover separate rings one LED apart? |
-| 10–18 | thin rings, 1 on / 2 off | single-LED rings with wider gaps: hotspots |
-| 19–27 | thick rings, 2 on / 2 off | two-LED rings: does each ring look even? |
-| 28–36 | solid, every ring lit | overall uniformity and colour bleed between rings |
-| 37–42 | expanding ripple, 100 % and 25 % | motion through the cover (Muon Ripple's speed, width and fade) |
+| # | Scheme |
+|---|---|
+| 1–11 | warm, rings 0 → 10 |
+| 12–22 | cool, rings 0 → 10 |
+| 23–33 | pride, rings 0 → 10 |
 
-Warm and cool rings alternate the typical and rare colours, so both are on screen together.
+Ring 0 is the middle 4 LEDs. The rings grow outwards, and rings 8–10 are cut off by the
+panel's square edge, so they show up as arcs near the corners. Ring 10 is just the 4 corner
+LEDs.
+
+| Ring | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| LEDs | 4 | 8 | 20 | 20 | 28 | 32 | 44 | 52 | 24 | 20 | 4 |
+
+The timing is held on a fixed schedule, so each ring really gets 0.75 s however long the
+frame took to send.
 
 ### Brightness and the power limit
 
 At full white, 256 NeoPixels can draw around 15 A, and a 4 A supply can't deliver that. The
 script estimates each frame's current conservatively (20 mA per colour channel at full,
-1 mA idle per LED). If a frame would go over `--max-amps` (3.5 A, leaving headroom on a
-4 A supply), it dims that frame just enough to fit, and the log says so:
+1 mA idle per LED), and if a frame would go over `--max-amps` (3.5 A, leaving headroom on a
+4 A supply) it dims that frame just enough to fit and logs `POWER-LIMITED`.
 
-```
-[1/42] thin rings, 1 on / 1 off | warm | 100%  (adjacent rings separated by one dark ring)
-  ~3.50 A  POWER-LIMITED: shown at 56% instead of 100%
-```
-
-So dense patterns at "100 %" actually run at the brightest level the supply can handle. Solid
-warm/cool rings at 100 % and 50 % both come out around 27 %, so those two slots look the same.
-The ripples stay under 1.5 A and are never dimmed. If you use a bigger supply, raise
-`--max-amps` to about 90 % of its rating.
+With one ring at a time this never actually triggers. The biggest ring (ring 7, 52 LEDs)
+comes to about 2.7 A at full brightness. The limit is there as a safety net. If you use a
+bigger supply, raise `--max-amps` to about 90 % of its rating.
 
 ## Notes
 
