@@ -40,7 +40,33 @@ Adafruit's recommended extras for a reliable panel:
 
 Power the Pi from its own USB-C supply.
 
-## Pi 5 setup (one time)
+## Quickstart
+
+On the Pi, as your normal user (not `sudo`):
+
+```bash
+git clone https://github.com/imthinkingbee/Muon-test.git
+cd Muon-test
+./quickstart.sh
+```
+
+`quickstart.sh` checks and sets up everything below, then starts the test. It's safe to run
+again: finished steps are skipped, so after the first time it goes straight to the test. It
+asks before anything big, and uses `sudo` only for system changes.
+
+1. Checks it's on a Raspberry Pi 5 with Python 3.11 or newer.
+2. If `/dev/pio0` is missing, offers to update the OS, then asks you to reboot.
+3. If you can't use `/dev/pio0`, adds a udev rule (`/etc/udev/rules.d/99-muon-pio.rules`) and
+   puts you in the `gpio` group. You may need one reboot after this.
+4. Creates the `.venv` virtual environment and installs the LED driver.
+5. Runs `ring_test.py`.
+
+If it stops and says reboot, reboot and run `./quickstart.sh` again.
+
+Anything after `./quickstart.sh` is passed to the test, e.g. `./quickstart.sh --hold 15` or
+`./quickstart.sh --start 37`. Use `./quickstart.sh --setup-only` to set up without running.
+
+## Pi 5 setup by hand (what quickstart.sh does)
 
 The Pi 5 can't use the old `rpi_ws281x` NeoPixel driver. This script uses Adafruit's Pi 5
 driver instead, which drives the LEDs with the RP1 chip's PIO block.
@@ -57,7 +83,7 @@ driver instead, which drives the LEDs with the RP1 chip's PIO block.
    - If it's **not found**, the firmware or kernel is too old. Update again (step 1).
    - If it's owned by `root root`, let the `gpio` group use it, so the script doesn't need `sudo`:
      ```bash
-     echo 'SUBSYSTEM=="*-pio", GROUP="gpio", MODE="0660"' | sudo tee -a /etc/udev/rules.d/99-com.rules
+     echo 'SUBSYSTEM=="*-pio", GROUP="gpio", MODE="0660"' | sudo tee /etc/udev/rules.d/99-muon-pio.rules
      sudo reboot
      ```
      Your user must be in the `gpio` group (the default user is). Check with `groups`.
@@ -72,6 +98,13 @@ driver instead, which drives the LEDs with the RP1 chip's PIO block.
    ```
 
 ## Running
+
+```bash
+cd Muon-test
+./quickstart.sh
+```
+
+or, after setup, directly:
 
 ```bash
 cd Muon-test
