@@ -33,6 +33,28 @@ The colour scheme changes on **every drop**: warm → cool → pride → warm �
 Pride ripples also throw off white glitter where the ring passes, as in the artifact. The
 artifact's fourth scheme, "bloody", is a splatter, not a ripple, so it's left out.
 
+### 🎃 Halloween: `--scheme pumpkin`
+
+```bash
+./quickstart.sh --scheme pumpkin
+```
+
+Every drop grows a **jack-o'-lantern** instead of a ripple. It starts as a small orange glow
+at the centre, grows to fill the panel in 0.9 s, holds until 1.6 s, then fades out. Drops
+keep the same random timing as the ripples. The pumpkin is drawn LED-for-LED on the 16×16
+grid, so at full size every LED is cleanly lit (orange body, green stem) or dark (carved
+eyes and grin).
+
+![pumpkin](docs/pumpkin.gif)
+
+- Only one pumpkin shows at a time. When a new one lands, the old one fades out in about
+  0.1 s, so the new pumpkin never grows over the old face and fills it in.
+- Each pumpkin's brightness still comes from its muon energy, but it's capped at 1×.
+  Brighter than that, the red channel clips and the orange turns yellow. Most drops land
+  at full brightness.
+- At full size a pumpkin draws about 4 A, so on a 4 A supply it's shown at about 86 % and
+  the log says `POWER-LIMITED` while it's held.
+
 ## Hardware
 
 - Raspberry Pi 5
@@ -131,13 +153,14 @@ The script runs until **Ctrl+C**, which turns the panel off. Each drop is logged
 so you can match what you saw through the cover to the drop:
 
 ```
-drop    1 | warm  | typical |   9.0 MeV | brightness x1.16
-drop    2 | cool  | typical |   6.8 MeV | brightness x0.88
-drop    3 | pride | rare    |  17.2 MeV | brightness x1.60
+drop    1 | warm    | typical |   9.0 MeV | brightness x1.16
+drop    2 | cool    | typical |   6.8 MeV | brightness x0.88
+drop    3 | pride   | rare    |  17.2 MeV | brightness x1.60
 ```
 
 | Option | Default | What it does |
 |---|---|---|
+| `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn; `pumpkin` = only jack-o'-lanterns |
 | `--rate R` | `0.4` | average drops per second, at random times. `1.7` = sea level. |
 | `--brightness B` | `1.0` | overall brightness from 0 to 1 (e.g. `0.25`) |
 | `--duration S` | `0` | stop after *S* seconds (`0` = run until Ctrl+C) |
@@ -151,6 +174,7 @@ Examples:
 
 ```bash
 python3 ring_test.py --rate 1.7             # real sea-level muon rate
+python3 ring_test.py --scheme pumpkin       # jack-o'-lanterns 🎃
 python3 ring_test.py --brightness 0.25      # dimmer, to see when light stops getting through
 python3 ring_test.py --seed 42              # same drops every time: swap covers and compare
 python3 ring_test.py --preview              # try it out without the panel
@@ -167,6 +191,8 @@ second).
 - At the default 0.4 drops/s this almost never happens: under 1 % of frames, when two bright
   drops overlap, and only briefly.
 - At `--rate 1.7`, drops overlap more and about 1 frame in 7 gets dimmed a little.
+- With `--scheme pumpkin`, every pumpkin is dimmed to about 86 % while it's at full size
+  (about a quarter of the time). It never goes lower than that.
 
 If you use a bigger supply, raise `--max-amps` to about 90 % of its rating.
 

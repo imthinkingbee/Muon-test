@@ -21,6 +21,9 @@ The colour scheme changes on every drop, warm -> cool -> pride -> warm ...
   pride typical: the next stripe of #ff3b3b #ff9a1f #ffe733 #2fd16a #3d7bff #b05cff,
         rare: a full rainbow round the ring; pride rings also throw off glitter
 
+--scheme pumpkin swaps the ripples for Halloween: each drop grows a jack-o'-lantern
+from a dot at the centre to full panel size in 0.9 s, holds it, then fades it out.
+
 Hardware: Raspberry Pi 5, data on GPIO18 (header pin 12) by default, panel on
 its own 5 V supply. Drives the LEDs with Adafruit's Pi 5 PIO driver
 (pip install Adafruit-Blinka-Raspberry-Pi5-Neopixel). See README.md.
@@ -69,6 +72,66 @@ FULL, HOT = 0.9 * MUON_PEAK, 1.8 * MUON_PEAK   # full brightness / rare colour f
 # ---- glitter on pride ripples (Muon Ripple design) ------------------------------
 GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "peak": 230, "tint": 0.35}
 
+# ---- pumpkin (--scheme pumpkin) ------------------------------------------------------
+# A jack-o'-lantern drawn on the panel's own 16x16 grid, so at full size every LED is
+# cleanly lit or dark. A drop grows it from a dot to full size, holds, then fades.
+PUMPKIN_ART = [
+    "................",
+    "........SS......",
+    ".......SS.......",
+    "....OOOOOOOO....",
+    "..OOOOOOOOOOOO..",
+    ".OOOOOOOOOOOOOO.",
+    ".OOO.OOOOOO.OOO.",
+    "OOO...OOOO...OOO",
+    "OO.....OO.....OO",
+    "OOOOOOOOOOOOOOOO",
+    "OO.OOOOOOOOOO.OO",
+    "OOO.....O....OOO",
+    ".OOO........OOO.",
+    "..OOOO....OOOO..",
+    "...OOOOOOOOOO...",
+    "....OOOOOOOO....",
+]
+PUMPKIN_COLOURS = {"O": (255, 100, 8), "S": (40, 150, 20)}
+PUMPKIN_GROW = 0.9                         # s, dot -> full size (ease-out)
+PUMPKIN_HOLD = 1.6                         # s, full brightness until here
+PUMPKIN_FADE = 0.35                        # s, fade time constant after the hold
+PUMPKIN_HANDOVER = 0.1                     # s, a pumpkin fades this fast once a new one lands
+
+
+def _summed_area(art, colours):
+    """Per-channel summed-area tables of the art, (N+1) x (N+1), for box-filtering it at any size."""
+    sat = [[[0.0] * (N + 1) for _ in range(N + 1)] for _ in range(3)]
+    for c in range(3):
+        for j in range(N):
+            for i in range(N):
+                v = colours.get(art[j][i], (0, 0, 0))[c]
+                sat[c][j + 1][i + 1] = v + sat[c][j][i + 1] + sat[c][j + 1][i] - sat[c][j][i]
+    return sat
+
+
+PUMPKIN_SAT = _summed_area(PUMPKIN_ART, PUMPKIN_COLOURS)
+
+
+def _area(table, x, y):
+    """Integral of the art over [0, x] x [0, y] in art pixels (bilinear, so exact for pixel art)."""
+    x, y = min(max(x, 0.0), N), min(max(y, 0.0), N)
+    i, j = min(int(x), N - 1), min(int(y), N - 1)
+    fx, fy = x - i, y - j
+    return (table[j][i] * (1 - fx) * (1 - fy) + table[j][i + 1] * fx * (1 - fy)
+            + table[j + 1][i] * (1 - fx) * fy + table[j + 1][i + 1] * fx * fy)
+
+
+def pumpkin_size(t):
+    """Pumpkin size 0..1 at t s after the drop: fast at first, settling at full size."""
+    x = min(1.0, t / PUMPKIN_GROW)
+    return max(0.02, 1 - (1 - x) ** 3)
+
+
+def pumpkin_level(t):
+    return 1.0 if t < PUMPKIN_HOLD else math.exp(-(t - PUMPKIN_HOLD) / PUMPKIN_FADE)
+
 
 def muon_energy(rng):
     """Energy (MeV) a cosmic muon leaves in the slab: cos^3 zenith direction, random entry
@@ -111,8 +174,10 @@ class Drop:
     def __init__(self, t0, scheme, energy, stripe):
         self.t0, self.scheme, self.e = t0, scheme, energy
         self.hot = energy > HOT
-        self.amp = min(1.6, energy / FULL)
+        # Pumpkins stop at 1x: above that the red channel clips and the orange turns yellow.
+        self.amp = min(1.0 if scheme == "pumpkin" else 1.6, energy / FULL)
         self.stripe = stripe
+        self.replaced_at = None      # pumpkins: when a newer pumpkin took over
 
     def colour(self, rainbow):
         if self.scheme == "pride":
@@ -131,6 +196,12 @@ class Ripples:
         self.last = None
 
     def add(self, drop):
+        if drop.scheme == "pumpkin":
+            # One jack-o'-lantern at a time: a new one takes over and the old one fades out
+            # quickly, so the new one doesn't grow over the old face and fill it in.
+            for d in self.drops:
+                if d.scheme == "pumpkin" and d.replaced_at is None:
+                    d.replaced_at = drop.t0
         self.drops.append(drop)
 
     def frame(self, now):
@@ -141,6 +212,9 @@ class Ripples:
         self.drops = [d for d in self.drops if now - d.t0 <= LIFE]
         for d in self.drops:
             t = now - d.t0
+            if d.scheme == "pumpkin":
+                self._pumpkin(px, d, t, now)
+                continue
             fade = math.exp(-t / (FADE / 2.2))
             r0 = RING_V * t
             core_t = math.exp(-t / CORE_T)
@@ -170,6 +244,24 @@ class Ripples:
             for k in range(3):
                 p[k] += env * GLITTER["peak"] / 255 * c[k]
         return px
+
+    @staticmethod
+    def _pumpkin(px, d, t, now):
+        """Add a growing jack-o'-lantern: each LED shows the average of the art under it."""
+        size, v = pumpkin_size(t), d.amp * pumpkin_level(t)
+        if d.replaced_at is not None:
+            v *= math.exp(-max(0.0, now - d.replaced_at) / PUMPKIN_HANDOVER)
+        h = 0.5 / size                     # half an LED, in art pixels
+        for j in range(N):
+            y = N / 2 + (j + 0.5 - N / 2) / size
+            for i in range(N):
+                x = N / 2 + (i + 0.5 - N / 2) / size
+                p = px[j][i]
+                for c in range(3):
+                    s = PUMPKIN_SAT[c]
+                    box = (_area(s, x + h, y + h) - _area(s, x - h, y + h)
+                           - _area(s, x + h, y - h) + _area(s, x - h, y - h))
+                    p[c] += v * box / (4 * h * h)
 
 
 def xy_to_index(x, y, layout):
@@ -261,6 +353,8 @@ def main():
     p = argparse.ArgumentParser(description="Muon-ripple opacity test for a 16x16 NeoPixel panel on a Pi 5.")
     p.add_argument("--rate", type=float, default=0.4,
                    help="average drops per second, at random times (default 0.4 'gallery pace'; 1.7 = sea level)")
+    p.add_argument("--scheme", choices=["rotate", "pumpkin"], default="rotate",
+                   help="rotate = warm, cool, pride in turn (default); pumpkin = only jack-o'-lanterns")
     p.add_argument("--brightness", type=float, default=1.0, help="brightness 0..1 (default 1.0)")
     p.add_argument("--duration", type=float, default=0, help="stop after this many seconds (default 0 = run until Ctrl+C)")
     p.add_argument("--pin", type=int, default=18, help="BCM GPIO number of the data line (default 18 = header pin 12)")
@@ -299,13 +393,17 @@ def main():
             if args.duration and now - start >= args.duration:
                 break
             if now >= next_drop:
-                scheme = SCHEME_ORDER[count % len(SCHEME_ORDER)]
+                if args.scheme == "pumpkin":
+                    scheme = "pumpkin"
+                else:
+                    scheme = SCHEME_ORDER[count % len(SCHEME_ORDER)]
                 drop = Drop(now, scheme, muon_energy(rng), stripe % len(PRIDE))
                 if scheme == "pride":
                     stripe += 1
                 field.add(drop)
                 count += 1
-                log(f"drop {count:4d} | {scheme:5s} | {'rare' if drop.hot else 'typical':7s} | "
+                kind = "" if scheme == "pumpkin" else ("rare" if drop.hot else "typical")
+                log(f"drop {count:4d} | {scheme:7s} | {kind:7s} | "
                     f"{drop.e:5.1f} MeV | brightness x{drop.amp:.2f}", out)
                 next_drop = now + rng.expovariate(args.rate)
             frame = field.frame(now)
