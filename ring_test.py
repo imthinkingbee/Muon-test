@@ -25,6 +25,8 @@ The colour scheme changes on every drop, warm -> cool -> pride -> warm ...
 
 --scheme pumpkin swaps the ripples for Halloween: each drop grows a jack-o'-lantern
 from a dot at the centre to full panel size in 0.9 s, holds it, then fades it out.
+--scheme pumpkin-warm, pumpkin-cool and pumpkin-pride colour the pumpkin's body like
+that scheme's ripples (typical / rare; a rare pride pumpkin is a full rainbow).
 
 Hardware: Raspberry Pi 5, data on GPIO18 (header pin 12) by default, panel on
 its own 5 V supply. Drives the LEDs with Adafruit's Pi 5 PIO driver
@@ -74,9 +76,10 @@ FULL, HOT = 0.9 * MUON_PEAK, 1.8 * MUON_PEAK   # full brightness / rare colour f
 # ---- glitter on pride ripples (Muon Ripple design) ------------------------------
 GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "peak": 230, "tint": 0.35}
 
-# ---- pumpkin (--scheme pumpkin) ------------------------------------------------------
+# ---- pumpkins (--scheme pumpkin, pumpkin-warm, pumpkin-cool, pumpkin-pride) ------------
 # A jack-o'-lantern drawn on the panel's own 16x16 grid, so at full size every LED is
 # cleanly lit or dark. A drop grows it from a dot to full size, holds, then fades.
+# O = body (coloured by the scheme), S = stem (always green).
 PUMPKIN_ART = [
     "................",
     "........SS......",
@@ -95,25 +98,26 @@ PUMPKIN_ART = [
     "...OOOOOOOOOO...",
     "....OOOOOOOO....",
 ]
-PUMPKIN_COLOURS = {"O": (255, 100, 8), "S": (40, 150, 20)}
+PUMPKIN_ORANGE = (255, 100, 8)            # body of the plain pumpkin
+PUMPKIN_STEM = (40, 150, 20)
 PUMPKIN_GROW = 0.9                         # s, dot -> full size (ease-out)
 PUMPKIN_HOLD = 1.6                         # s, full brightness until here
 PUMPKIN_FADE = 0.35                        # s, fade time constant after the hold
 PUMPKIN_HANDOVER = 0.1                     # s, a pumpkin fades this fast once a new one lands
 
 
-def _summed_area(art, colours):
-    """Per-channel summed-area tables of the art, (N+1) x (N+1), for box-filtering it at any size."""
-    sat = [[[0.0] * (N + 1) for _ in range(N + 1)] for _ in range(3)]
-    for c in range(3):
-        for j in range(N):
-            for i in range(N):
-                v = colours.get(art[j][i], (0, 0, 0))[c]
-                sat[c][j + 1][i + 1] = v + sat[c][j][i + 1] + sat[c][j + 1][i] - sat[c][j][i]
+def _summed_area(art, mark):
+    """Summed-area table, (N+1) x (N+1), of where `mark` is in the art, for box-filtering it at any size."""
+    sat = [[0.0] * (N + 1) for _ in range(N + 1)]
+    for j in range(N):
+        for i in range(N):
+            v = 1.0 if art[j][i] == mark else 0.0
+            sat[j + 1][i + 1] = v + sat[j][i + 1] + sat[j + 1][i] - sat[j][i]
     return sat
 
 
-PUMPKIN_SAT = _summed_area(PUMPKIN_ART, PUMPKIN_COLOURS)
+PUMPKIN_BODY = _summed_area(PUMPKIN_ART, "O")
+PUMPKIN_STEM_SAT = _summed_area(PUMPKIN_ART, "S")
 
 
 def _area(table, x, y):
@@ -176,34 +180,51 @@ class Drop:
     def __init__(self, t0, scheme, energy, stripe):
         self.t0, self.scheme, self.e = t0, scheme, energy
         self.hot = energy > HOT
-        # Pumpkins stop at 1x: above that the red channel clips and the orange turns yellow.
-        self.amp = min(1.0 if scheme == "pumpkin" else 1.6, energy / FULL)
+        self.pumpkin = scheme.startswith("pumpkin")
+        # Pumpkins stop at 1x: above that colours clip (the orange would turn yellow).
+        self.amp = min(1.0 if self.pumpkin else 1.6, energy / FULL)
         self.stripe = stripe
         self.replaced_at = None      # pumpkins: when a newer pumpkin took over
+        self.fit = 1.0               # pumpkins: brightness that keeps the full-size one under the power limit
 
     def colour(self, rainbow):
-        if self.scheme == "pride":
+        """Colour of the ripple, or of the pumpkin's body, at an LED with this rainbow hue."""
+        if self.scheme == "pumpkin":
+            return PUMPKIN_ORANGE
+        base = self.scheme.removeprefix("pumpkin-")
+        if base == "pride":
             return rainbow if self.hot else PRIDE[self.stripe]
-        s = SCHEMES[self.scheme]
+        s = SCHEMES[base]
         return s["hot"] if self.hot else s["typ"]
 
 
 class Ripples:
     """The panel's light field: active drops plus pride glitter, as Muon Ripple draws them."""
 
-    def __init__(self, rng):
+    def __init__(self, rng, level=1.0, max_amps=None):
         self.rng = rng
+        self.level, self.max_amps = level, max_amps
         self.drops = []
         self.sparkles = []       # [led, t0, colour, strength]
         self.last = None
 
     def add(self, drop):
-        if drop.scheme == "pumpkin":
+        if drop.pumpkin:
             # One jack-o'-lantern at a time: a new one takes over and the old one fades out
             # quickly, so the new one doesn't grow over the old face and fill it in.
             for d in self.drops:
-                if d.scheme == "pumpkin" and d.replaced_at is None:
+                if d.pumpkin and d.replaced_at is None:
                     d.replaced_at = drop.t0
+            # Fix its brightness up front so the full-size pumpkin fits the power limit; it then
+            # grows at one steady brightness instead of dimming as it fills the panel.
+            if self.max_amps is not None:
+                full = [[(0.0, 0.0, 0.0)] * N for _ in range(N)]
+                for i, j, _dist, rainbow in LEDS:
+                    mark = PUMPKIN_ART[j][i]
+                    col = drop.colour(rainbow) if mark == "O" else PUMPKIN_STEM if mark == "S" else None
+                    if col:
+                        full[j][i] = tuple(drop.amp * c for c in col)
+                drop.fit = power_scale(full, self.level, self.max_amps)
         self.drops.append(drop)
 
     def frame(self, now):
@@ -214,7 +235,7 @@ class Ripples:
         self.drops = [d for d in self.drops if now - d.t0 <= LIFE]
         for d in self.drops:
             t = now - d.t0
-            if d.scheme == "pumpkin":
+            if d.pumpkin:
                 self._pumpkin(px, d, t, now)
                 continue
             fade = math.exp(-t / (FADE / 2.2))
@@ -250,20 +271,25 @@ class Ripples:
     @staticmethod
     def _pumpkin(px, d, t, now):
         """Add a growing jack-o'-lantern: each LED shows the average of the art under it."""
-        size, v = pumpkin_size(t), d.amp * pumpkin_level(t)
+        size, v = pumpkin_size(t), d.amp * d.fit * pumpkin_level(t)
         if d.replaced_at is not None:
             v *= math.exp(-max(0.0, now - d.replaced_at) / PUMPKIN_HANDOVER)
         h = 0.5 / size                     # half an LED, in art pixels
-        for j in range(N):
+
+        def cover(s, x, y):                # fraction of the LED's footprint the art covers
+            return (_area(s, x + h, y + h) - _area(s, x - h, y + h)
+                    - _area(s, x + h, y - h) + _area(s, x - h, y - h)) / (4 * h * h)
+
+        for i, j, _dist, rainbow in LEDS:
+            x = N / 2 + (i + 0.5 - N / 2) / size
             y = N / 2 + (j + 0.5 - N / 2) / size
-            for i in range(N):
-                x = N / 2 + (i + 0.5 - N / 2) / size
-                p = px[j][i]
-                for c in range(3):
-                    s = PUMPKIN_SAT[c]
-                    box = (_area(s, x + h, y + h) - _area(s, x - h, y + h)
-                           - _area(s, x + h, y - h) + _area(s, x - h, y - h))
-                    p[c] += v * box / (4 * h * h)
+            body, stem = cover(PUMPKIN_BODY, x, y), cover(PUMPKIN_STEM_SAT, x, y)
+            if body <= 0 and stem <= 0:
+                continue
+            col = d.colour(rainbow)
+            p = px[j][i]
+            for c in range(3):
+                p[c] += v * (body * col[c] + stem * PUMPKIN_STEM[c])
 
 
 def xy_to_index(x, y, layout):
@@ -283,7 +309,7 @@ def power_scale(frame, level, max_amps):
     """Extra factor (<= 1) that keeps the frame's estimated current under max_amps."""
     idle = N * N * MA_IDLE_PER_LED / 1000.0
     amps = current_amps(frame, level)
-    if amps <= max_amps:
+    if amps <= max_amps + 1e-6:            # tolerance: float rounding isn't a real overload
         return 1.0
     return max(0.0, (max_amps - idle) / (amps - idle))
 
@@ -355,9 +381,11 @@ def main():
     p = argparse.ArgumentParser(description="Muon-ripple opacity test for a 16x16 NeoPixel panel on a Pi 5.")
     p.add_argument("--rate", type=float, default=0.4,
                    help="average drops per second, at random times (default 0.4 'gallery pace'; 1.7 = sea level)")
-    p.add_argument("--scheme", choices=["rotate"] + SCHEME_ORDER + ["pumpkin"], default="rotate",
+    p.add_argument("--scheme", choices=["rotate"] + SCHEME_ORDER + ["pumpkin"]
+                   + [f"pumpkin-{s}" for s in SCHEME_ORDER], default="rotate",
                    help="rotate = warm, cool, pride in turn (default); warm, cool or pride = only that "
-                        "scheme's ripples; pumpkin = only jack-o'-lanterns")
+                        "scheme's ripples; pumpkin = orange jack-o'-lanterns; pumpkin-warm, "
+                        "pumpkin-cool, pumpkin-pride = jack-o'-lanterns in that scheme's colours")
     p.add_argument("--brightness", type=float, default=1.0, help="brightness 0..1 (default 1.0)")
     p.add_argument("--duration", type=float, default=0, help="stop after this many seconds (default 0 = run until Ctrl+C)")
     p.add_argument("--pin", type=int, default=18, help="BCM GPIO number of the data line (default 18 = header pin 12)")
@@ -380,7 +408,7 @@ def main():
 
     rng = random.Random(args.seed)
     out = TerminalPreview() if args.preview else Panel(args.pin)
-    field = Ripples(rng)
+    field = Ripples(rng, args.brightness, args.max_amps)
 
     # systemd / kill send SIGTERM; turn it into the same clean exit as Ctrl+C.
     def stop(signum, _frame):
@@ -401,17 +429,19 @@ def main():
                 else:
                     scheme = args.scheme
                 drop = Drop(now, scheme, muon_energy(rng), stripe % len(PRIDE))
-                if scheme == "pride":
+                if scheme in ("pride", "pumpkin-pride"):
                     stripe += 1
                 field.add(drop)
                 count += 1
                 kind = "" if scheme == "pumpkin" else ("rare" if drop.hot else "typical")
-                log(f"drop {count:4d} | {scheme:7s} | {kind:7s} | "
-                    f"{drop.e:5.1f} MeV | brightness x{drop.amp:.2f}", out)
+                fit = f" | fitted to {drop.fit:.0%} for the power limit" if drop.fit < 1 else ""
+                log(f"drop {count:4d} | {scheme:13s} | {kind:7s} | "
+                    f"{drop.e:5.1f} MeV | brightness x{drop.amp:.2f}{fit}", out)
                 next_drop = now + rng.expovariate(args.rate)
             frame = field.frame(now)
             level = args.brightness * power_scale(frame, args.brightness, args.max_amps)
-            if level < args.brightness and now - last_limit_log >= 1.0:
+            # Always applied; only logged when it's a visible (1 %+) dip, at most once a second.
+            if level < 0.99 * args.brightness and now - last_limit_log >= 1.0:
                 log(f"  POWER-LIMITED: dimmed to {level:.0%} to stay under {args.max_amps} A", out)
                 last_limit_log = now
             out.show(frame, level, args.layout)

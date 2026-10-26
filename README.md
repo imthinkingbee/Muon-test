@@ -53,8 +53,32 @@ eyes and grin).
 - Each pumpkin's brightness still comes from its muon energy, but it's capped at 1×.
   Brighter than that, the red channel clips and the orange turns yellow. Most drops land
   at full brightness.
-- At full size a pumpkin draws about 4 A, so on a 4 A supply it's shown at about 86 % and
-  the log says `POWER-LIMITED` while it's held.
+- Each pumpkin's brightness is set when it lands, so the full-size pumpkin fits the power
+  limit, and it then grows at that one steady brightness. It doesn't dim as it fills the
+  panel. An orange pumpkin draws about 4 A at full size, so on a 4 A supply it runs at about
+  85 %. The log shows it: `fitted to 85% for the power limit`.
+
+#### Pumpkins in the ripple colours
+
+```bash
+./quickstart.sh --scheme pumpkin-warm     # or pumpkin-cool, pumpkin-pride
+```
+
+The same jack-o'-lantern, with its body coloured like that scheme's ripples. The stem stays
+green.
+
+| Scheme | Typical drop | Rare drop (over 15.5 MeV, about 7 %) |
+|---|---|---|
+| `pumpkin-warm` | white "ghost" pumpkin `#dfe9ff` | amber `#ffb04a` |
+| `pumpkin-cool` | cyan `#6fd8ff` | purple `#b996ff` |
+| `pumpkin-pride` | the next pride stripe on each drop | a full-rainbow jack-o'-lantern |
+
+![pumpkins](docs/pumpkins.gif)
+
+White and cyan pumpkins light every colour channel, so they draw far more current: 6–7.6 A
+at full size. On a 4 A supply they're fitted down to about 45–60 % brightness (pride ones to
+about 60–85 %). A bigger supply and a higher `--max-amps` will let them run brighter. On a
+green-stripe pride pumpkin, the green stem blends into the body.
 
 ## Hardware
 
@@ -154,14 +178,14 @@ The script runs until **Ctrl+C**, which turns the panel off. Each drop is logged
 so you can match what you saw through the cover to the drop:
 
 ```
-drop    1 | warm    | typical |   9.0 MeV | brightness x1.16
-drop    2 | cool    | typical |   6.8 MeV | brightness x0.88
-drop    3 | pride   | rare    |  17.2 MeV | brightness x1.60
+drop    1 | warm          | typical |   9.0 MeV | brightness x1.16
+drop    2 | cool          | typical |   6.8 MeV | brightness x0.88
+drop    3 | pride         | rare    |  17.2 MeV | brightness x1.60
 ```
 
 | Option | Default | What it does |
 |---|---|---|
-| `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn. `warm`, `cool` or `pride` = only that scheme's ripples. `pumpkin` = only jack-o'-lanterns. |
+| `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn. `warm`, `cool` or `pride` = only that scheme's ripples. `pumpkin` = orange jack-o'-lanterns. `pumpkin-warm`, `pumpkin-cool`, `pumpkin-pride` = jack-o'-lanterns in that scheme's colours. |
 | `--rate R` | `0.4` | average drops per second, at random times. `1.7` = sea level. |
 | `--brightness B` | `1.0` | overall brightness from 0 to 1 (e.g. `0.25`) |
 | `--duration S` | `0` | stop after *S* seconds (`0` = run until Ctrl+C) |
@@ -177,6 +201,7 @@ Examples:
 python3 ring_test.py --rate 1.7             # real sea-level muon rate
 python3 ring_test.py --scheme cool          # only cool ripples (also: warm, pride)
 python3 ring_test.py --scheme pumpkin       # jack-o'-lanterns 🎃
+python3 ring_test.py --scheme pumpkin-pride # rainbow jack-o'-lanterns
 python3 ring_test.py --brightness 0.25      # dimmer, to see when light stops getting through
 python3 ring_test.py --seed 42              # same drops every time: swap covers and compare
 python3 ring_test.py --preview              # try it out without the panel
@@ -188,13 +213,14 @@ At full white, 256 NeoPixels can draw around 15 A, and a 4 A supply can't delive
 script estimates each frame's current conservatively (20 mA per colour channel at full,
 1 mA idle per LED), and if a frame would go over `--max-amps` (3.5 A, leaving headroom on a
 4 A supply) it dims that frame just enough to fit and logs `POWER-LIMITED` (at most once a
-second).
+second, and only for dips of 1 % or more).
 
 - At the default 0.4 drops/s this almost never happens: under 1 % of frames, when two bright
   drops overlap, and only briefly.
 - At `--rate 1.7`, drops overlap more and about 1 frame in 7 gets dimmed a little.
-- With `--scheme pumpkin`, every pumpkin is dimmed to about 86 % while it's at full size
-  (about a quarter of the time). It never goes lower than that.
+- Pumpkins don't lean on the limiter: each one's brightness is fitted when it lands (see
+  the Halloween section). The limiter only nudges things by a fraction of a percent while one
+  pumpkin hands over to the next, and dips that small aren't logged.
 
 If you use a bigger supply, raise `--max-amps` to about 90 % of its rating.
 
