@@ -26,7 +26,10 @@ The colour scheme changes on every drop, warm -> cool -> pride -> warm ...
 --scheme pumpkin swaps the ripples for Halloween: each drop grows a jack-o'-lantern
 from a dot at the centre to full panel size in 0.9 s, holds it, then fades it out.
 --scheme pumpkin-warm, pumpkin-cool and pumpkin-pride colour the pumpkin's body like
-that scheme's ripples (typical / rare; a rare pride pumpkin is a full rainbow).
+that scheme's ripples (typical / rare; a rare pride pumpkin is a full rainbow), and
+pride pumpkins sparkle like pride ripples.
+
+--scheme soccer grows a white soccer ball with dark pentagon patches the same way.
 
 Hardware: Raspberry Pi 5, data on GPIO18 (header pin 12) by default, panel on
 its own 5 V supply. Drives the LEDs with Adafruit's Pi 5 PIO driver
@@ -76,11 +79,10 @@ FULL, HOT = 0.9 * MUON_PEAK, 1.8 * MUON_PEAK   # full brightness / rare colour f
 # ---- glitter on pride ripples (Muon Ripple design) ------------------------------
 GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "peak": 230, "tint": 0.35}
 
-# ---- pumpkins (--scheme pumpkin, pumpkin-warm, pumpkin-cool, pumpkin-pride) ------------
-# A jack-o'-lantern drawn on the panel's own 16x16 grid, so at full size every LED is
-# cleanly lit or dark. A drop grows it from a dot to full size, holds, then fades.
-# O = body (coloured by the scheme), S = stem (always green).
-PUMPKIN_ART = [
+# ---- shapes: pumpkins and the soccer ball --------------------------------------------
+# Pixel art on the panel's own 16x16 grid, so at full size every LED is cleanly lit or
+# dark. A drop grows the shape from a dot to full size, holds it, then fades it out.
+PUMPKIN_ART = [                            # O = body (coloured by the scheme), S = stem
     "................",
     "........SS......",
     ".......SS.......",
@@ -98,12 +100,34 @@ PUMPKIN_ART = [
     "...OOOOOOOOOO...",
     "....OOOOOOOO....",
 ]
+SOCCER_ART = [                             # W = white panels; the gaps are the pentagons
+    ".....WWWWWW.....",
+    "...WWW....WWW...",
+    "..WWWWW..WWWWW..",
+    ".WWWWWWWWWWWWWW.",
+    ".WWWWWWWWWWWWWW.",
+    "W..WWWW..WWWW..W",
+    "W..WWW....WWW..W",
+    "WWWWWW....WWWWWW",
+    "WWWWWWWWWWWWWWWW",
+    "WWWWWWWWWWWWWWWW",
+    "WWWWWWWWWWWWWWWW",
+    ".WW..WWWWWW..WW.",
+    ".WW...WWWW...WW.",
+    "..WWWWWWWWWWWW..",
+    "...WWWWWWWWWW...",
+    ".....WWWWWW.....",
+]
+SHAPE_ART = {"pumpkin": PUMPKIN_ART, "soccer": SOCCER_ART}
 PUMPKIN_ORANGE = (255, 100, 8)            # body of the plain pumpkin
 PUMPKIN_STEM = (40, 150, 20)
-PUMPKIN_GROW = 0.9                         # s, dot -> full size (ease-out)
-PUMPKIN_HOLD = 1.6                         # s, full brightness until here
-PUMPKIN_FADE = 0.35                        # s, fade time constant after the hold
-PUMPKIN_HANDOVER = 0.1                     # s, a pumpkin fades this fast once a new one lands
+SOCCER_WHITE = (235, 235, 235)
+SHAPE_GROW = 0.9                           # s, dot -> full size (ease-out)
+SHAPE_HOLD = 1.6                           # s, full brightness until here
+SHAPE_FADE = 0.25                          # s, fade time constant after the hold
+SHAPE_HANDOVER = 0.1                       # s, a shape fades this fast once a new one lands
+SHAPE_GLITTER = 0.3                        # pride pumpkins: sparkles per second per fully lit body LED
+GLITTER_RESERVE = 0.15                     # share of --max-amps kept free for them (~0.5 A of 3.5 A)
 
 
 def _summed_area(art, mark):
@@ -116,8 +140,9 @@ def _summed_area(art, mark):
     return sat
 
 
-PUMPKIN_BODY = _summed_area(PUMPKIN_ART, "O")
-PUMPKIN_STEM_SAT = _summed_area(PUMPKIN_ART, "S")
+# Per shape, one table per part of the art ("O" body, "S" stem, "W" white panels).
+SHAPE_SAT = {name: {mark: _summed_area(art, mark) for mark in sorted(set("".join(art)) - {"."})}
+             for name, art in SHAPE_ART.items()}
 
 
 def _area(table, x, y):
@@ -129,14 +154,14 @@ def _area(table, x, y):
             + table[j + 1][i] * (1 - fx) * fy + table[j + 1][i + 1] * fx * fy)
 
 
-def pumpkin_size(t):
-    """Pumpkin size 0..1 at t s after the drop: fast at first, settling at full size."""
-    x = min(1.0, t / PUMPKIN_GROW)
+def shape_size(t):
+    """Shape size 0..1 at t s after the drop: fast at first, settling at full size."""
+    x = min(1.0, t / SHAPE_GROW)
     return max(0.02, 1 - (1 - x) ** 3)
 
 
-def pumpkin_level(t):
-    return 1.0 if t < PUMPKIN_HOLD else math.exp(-(t - PUMPKIN_HOLD) / PUMPKIN_FADE)
+def shape_level(t):
+    return 1.0 if t < SHAPE_HOLD else math.exp(-(t - SHAPE_HOLD) / SHAPE_FADE)
 
 
 def muon_energy(rng):
@@ -180,12 +205,12 @@ class Drop:
     def __init__(self, t0, scheme, energy, stripe):
         self.t0, self.scheme, self.e = t0, scheme, energy
         self.hot = energy > HOT
-        self.pumpkin = scheme.startswith("pumpkin")
-        # Pumpkins stop at 1x: above that colours clip (the orange would turn yellow).
-        self.amp = min(1.0 if self.pumpkin else 1.6, energy / FULL)
+        self.shape = "pumpkin" if scheme.startswith("pumpkin") else "soccer" if scheme == "soccer" else None
+        # Shapes stop at 1x: above that colours clip (the orange would turn yellow).
+        self.amp = min(1.0 if self.shape else 1.6, energy / FULL)
         self.stripe = stripe
-        self.replaced_at = None      # pumpkins: when a newer pumpkin took over
-        self.fit = 1.0               # pumpkins: brightness that keeps the full-size one under the power limit
+        self.replaced_at = None      # shapes: when a newer shape took over
+        self.fit = 1.0               # shapes: brightness that keeps the full-size one under the power limit
 
     def colour(self, rainbow):
         """Colour of the ripple, or of the pumpkin's body, at an LED with this rainbow hue."""
@@ -196,6 +221,14 @@ class Drop:
             return rainbow if self.hot else PRIDE[self.stripe]
         s = SCHEMES[base]
         return s["hot"] if self.hot else s["typ"]
+
+    def part_colour(self, mark, rainbow):
+        """Colour of one part of a shape's art."""
+        if mark == "S":
+            return PUMPKIN_STEM
+        if mark == "W":
+            return SOCCER_WHITE
+        return self.colour(rainbow)  # "O", the pumpkin's body
 
 
 class Ripples:
@@ -209,22 +242,22 @@ class Ripples:
         self.last = None
 
     def add(self, drop):
-        if drop.pumpkin:
-            # One jack-o'-lantern at a time: a new one takes over and the old one fades out
-            # quickly, so the new one doesn't grow over the old face and fill it in.
+        if drop.shape:
+            # One shape at a time: a new one takes over and the old one fades out quickly,
+            # so the new one doesn't grow over the old one and fill in its dark parts.
             for d in self.drops:
-                if d.pumpkin and d.replaced_at is None:
+                if d.shape and d.replaced_at is None:
                     d.replaced_at = drop.t0
-            # Fix its brightness up front so the full-size pumpkin fits the power limit; it then
+            # Fix its brightness up front so the full-size shape fits the power limit; it then
             # grows at one steady brightness instead of dimming as it fills the panel.
             if self.max_amps is not None:
+                art = SHAPE_ART[drop.shape]
                 full = [[(0.0, 0.0, 0.0)] * N for _ in range(N)]
                 for i, j, _dist, rainbow in LEDS:
-                    mark = PUMPKIN_ART[j][i]
-                    col = drop.colour(rainbow) if mark == "O" else PUMPKIN_STEM if mark == "S" else None
-                    if col:
-                        full[j][i] = tuple(drop.amp * c for c in col)
-                drop.fit = power_scale(full, self.level, self.max_amps)
+                    if art[j][i] != ".":
+                        full[j][i] = tuple(drop.amp * c for c in drop.part_colour(art[j][i], rainbow))
+                keep = 1 - GLITTER_RESERVE if drop.scheme == "pumpkin-pride" else 1.0
+                drop.fit = power_scale(full, self.level, self.max_amps * keep)
         self.drops.append(drop)
 
     def frame(self, now):
@@ -235,8 +268,8 @@ class Ripples:
         self.drops = [d for d in self.drops if now - d.t0 <= LIFE]
         for d in self.drops:
             t = now - d.t0
-            if d.pumpkin:
-                self._pumpkin(px, d, t, now)
+            if d.shape:
+                self._shape(px, d, t, now, dt)
                 continue
             fade = math.exp(-t / (FADE / 2.2))
             r0 = RING_V * t
@@ -268,28 +301,37 @@ class Ripples:
                 p[k] += env * GLITTER["peak"] / 255 * c[k]
         return px
 
-    @staticmethod
-    def _pumpkin(px, d, t, now):
-        """Add a growing jack-o'-lantern: each LED shows the average of the art under it."""
-        size, v = pumpkin_size(t), d.amp * d.fit * pumpkin_level(t)
+    def _shape(self, px, d, t, now, dt):
+        """Add a growing shape: each LED shows the average of the art under it."""
+        level = shape_level(t)
         if d.replaced_at is not None:
-            v *= math.exp(-max(0.0, now - d.replaced_at) / PUMPKIN_HANDOVER)
+            level *= math.exp(-max(0.0, now - d.replaced_at) / SHAPE_HANDOVER)
+        v = d.amp * d.fit * level
+        size = shape_size(t)
         h = 0.5 / size                     # half an LED, in art pixels
 
         def cover(s, x, y):                # fraction of the LED's footprint the art covers
             return (_area(s, x + h, y + h) - _area(s, x - h, y + h)
                     - _area(s, x + h, y - h) + _area(s, x - h, y - h)) / (4 * h * h)
 
-        for i, j, _dist, rainbow in LEDS:
+        glitter = d.scheme == "pumpkin-pride"
+        for n, (i, j, _dist, rainbow) in enumerate(LEDS):
             x = N / 2 + (i + 0.5 - N / 2) / size
             y = N / 2 + (j + 0.5 - N / 2) / size
-            body, stem = cover(PUMPKIN_BODY, x, y), cover(PUMPKIN_STEM_SAT, x, y)
-            if body <= 0 and stem <= 0:
-                continue
-            col = d.colour(rainbow)
             p = px[j][i]
-            for c in range(3):
-                p[c] += v * (body * col[c] + stem * PUMPKIN_STEM[c])
+            for mark, table in SHAPE_SAT[d.shape].items():
+                f = cover(table, x, y)
+                if f <= 1e-9:
+                    continue
+                col = d.part_colour(mark, rainbow)
+                for c in range(3):
+                    p[c] += v * f * col[c]
+                # Pride pumpkins sparkle like pride ripples: white with a touch of the body colour.
+                if (glitter and mark == "O" and
+                        self.rng.random() < SHAPE_GLITTER * (1.5 if d.hot else 1) * d.amp * level * f * dt):
+                    c = tuple((1 - GLITTER["tint"]) * 245 + GLITTER["tint"] * ch for ch in col)
+                    # Dimmed with the pumpkin's power fit, so they stay in proportion to its body.
+                    self.sparkles.append([n, now, c, (0.6 + 0.4 * self.rng.random()) * d.fit])
 
 
 def xy_to_index(x, y, layout):
@@ -382,10 +424,11 @@ def main():
     p.add_argument("--rate", type=float, default=0.4,
                    help="average drops per second, at random times (default 0.4 'gallery pace'; 1.7 = sea level)")
     p.add_argument("--scheme", choices=["rotate"] + SCHEME_ORDER + ["pumpkin"]
-                   + [f"pumpkin-{s}" for s in SCHEME_ORDER], default="rotate",
+                   + [f"pumpkin-{s}" for s in SCHEME_ORDER] + ["soccer"], default="rotate",
                    help="rotate = warm, cool, pride in turn (default); warm, cool or pride = only that "
                         "scheme's ripples; pumpkin = orange jack-o'-lanterns; pumpkin-warm, "
-                        "pumpkin-cool, pumpkin-pride = jack-o'-lanterns in that scheme's colours")
+                        "pumpkin-cool, pumpkin-pride = jack-o'-lanterns in that scheme's colours; "
+                        "soccer = soccer balls")
     p.add_argument("--brightness", type=float, default=1.0, help="brightness 0..1 (default 1.0)")
     p.add_argument("--duration", type=float, default=0, help="stop after this many seconds (default 0 = run until Ctrl+C)")
     p.add_argument("--pin", type=int, default=18, help="BCM GPIO number of the data line (default 18 = header pin 12)")
@@ -433,7 +476,7 @@ def main():
                     stripe += 1
                 field.add(drop)
                 count += 1
-                kind = "" if scheme == "pumpkin" else ("rare" if drop.hot else "typical")
+                kind = "" if scheme in ("pumpkin", "soccer") else ("rare" if drop.hot else "typical")
                 fit = f" | fitted to {drop.fit:.0%} for the power limit" if drop.fit < 1 else ""
                 log(f"drop {count:4d} | {scheme:13s} | {kind:7s} | "
                     f"{drop.e:5.1f} MeV | brightness x{drop.amp:.2f}{fit}", out)

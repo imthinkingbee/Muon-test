@@ -41,7 +41,8 @@ artifact's fourth scheme, "bloody", is a splatter, not a ripple, so it's left ou
 ```
 
 Every drop grows a **jack-o'-lantern** instead of a ripple. It starts as a small orange glow
-at the centre, grows to fill the panel in 0.9 s, holds until 1.6 s, then fades out. Drops
+at the centre, grows to fill the panel in 0.9 s, holds until 1.6 s, then fades out over
+about 0.75 s. Drops
 keep the same random timing as the ripples. The pumpkin is drawn LED-for-LED on the 16×16
 grid, so at full size every LED is cleanly lit (orange body, green stem) or dark (carved
 eyes and grin).
@@ -73,12 +74,32 @@ green.
 | `pumpkin-cool` | cyan `#6fd8ff` | purple `#b996ff` |
 | `pumpkin-pride` | the next pride stripe on each drop | a full-rainbow jack-o'-lantern |
 
+Pride pumpkins **sparkle** like the pride ripples: white glints, with a touch of the body
+colour, twinkle across the body while it's lit. Rare (rainbow) pumpkins sparkle 1.5× as
+much, as in the artifact.
+
 ![pumpkins](docs/pumpkins.gif)
 
 White and cyan pumpkins light every colour channel, so they draw far more current: 6–7.6 A
 at full size. On a 4 A supply they're fitted down to about 45–60 % brightness (pride ones to
-about 60–85 %). A bigger supply and a higher `--max-amps` will let them run brighter. On a
-green-stripe pride pumpkin, the green stem blends into the body.
+about 50–85 %, keeping 15 % of the current free for the sparkles). A bigger supply and a
+higher `--max-amps` will let them run brighter. On a green-stripe pride pumpkin, the green
+stem blends into the body.
+
+### ⚽ Soccer ball: `--scheme soccer`
+
+```bash
+./quickstart.sh --scheme soccer
+```
+
+The same grow-hold-fade as the pumpkins, but each drop is a **soccer ball**: white panels
+with a dark pentagon in the middle, one at the top and two down each side. The ball is drawn
+LED-for-LED on the grid with a one-LED white rim, so it stays round.
+
+![soccer](docs/soccer.gif)
+
+A white ball lights all three colour channels on 174 LEDs, about 10 A at full brightness.
+So on a 4 A supply it's fitted to about 35 %, which is still bright white on the panel.
 
 ## Hardware
 
@@ -185,7 +206,7 @@ drop    3 | pride         | rare    |  17.2 MeV | brightness x1.60
 
 | Option | Default | What it does |
 |---|---|---|
-| `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn. `warm`, `cool` or `pride` = only that scheme's ripples. `pumpkin` = orange jack-o'-lanterns. `pumpkin-warm`, `pumpkin-cool`, `pumpkin-pride` = jack-o'-lanterns in that scheme's colours. |
+| `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn. `warm`, `cool` or `pride` = only that scheme's ripples. `pumpkin` = orange jack-o'-lanterns. `pumpkin-warm`, `pumpkin-cool`, `pumpkin-pride` = jack-o'-lanterns in that scheme's colours. `soccer` = soccer balls. |
 | `--rate R` | `0.4` | average drops per second, at random times. `1.7` = sea level. |
 | `--brightness B` | `1.0` | overall brightness from 0 to 1 (e.g. `0.25`) |
 | `--duration S` | `0` | stop after *S* seconds (`0` = run until Ctrl+C) |
@@ -201,7 +222,8 @@ Examples:
 python3 ring_test.py --rate 1.7             # real sea-level muon rate
 python3 ring_test.py --scheme cool          # only cool ripples (also: warm, pride)
 python3 ring_test.py --scheme pumpkin       # jack-o'-lanterns 🎃
-python3 ring_test.py --scheme pumpkin-pride # rainbow jack-o'-lanterns
+python3 ring_test.py --scheme pumpkin-pride # rainbow jack-o'-lanterns, with sparkles
+python3 ring_test.py --scheme soccer        # soccer balls ⚽
 python3 ring_test.py --brightness 0.25      # dimmer, to see when light stops getting through
 python3 ring_test.py --seed 42              # same drops every time: swap covers and compare
 python3 ring_test.py --preview              # try it out without the panel
@@ -218,9 +240,9 @@ second, and only for dips of 1 % or more).
 - At the default 0.4 drops/s this almost never happens: under 1 % of frames, when two bright
   drops overlap, and only briefly.
 - At `--rate 1.7`, drops overlap more and about 1 frame in 7 gets dimmed a little.
-- Pumpkins don't lean on the limiter: each one's brightness is fitted when it lands (see
-  the Halloween section). The limiter only nudges things by a fraction of a percent while one
-  pumpkin hands over to the next, and dips that small aren't logged.
+- Pumpkins and soccer balls don't lean on the limiter: each one's brightness is fitted when
+  it lands (see the Halloween section). The limiter only nudges things by a fraction of a
+  percent while one hands over to the next, and dips that small aren't logged.
 
 If you use a bigger supply, raise `--max-amps` to about 90 % of its rating.
 
