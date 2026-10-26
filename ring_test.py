@@ -21,6 +21,8 @@ The colour scheme changes on every drop, warm -> cool -> pride -> warm ...
   pride typical: the next stripe of #ff3b3b #ff9a1f #ffe733 #2fd16a #3d7bff #b05cff,
         rare: a full rainbow round the ring; pride rings also throw off glitter
 
+--scheme warm, cool or pride runs only that scheme's ripples.
+
 --scheme pumpkin swaps the ripples for Halloween: each drop grows a jack-o'-lantern
 from a dot at the centre to full panel size in 0.9 s, holds it, then fades it out.
 
@@ -353,8 +355,9 @@ def main():
     p = argparse.ArgumentParser(description="Muon-ripple opacity test for a 16x16 NeoPixel panel on a Pi 5.")
     p.add_argument("--rate", type=float, default=0.4,
                    help="average drops per second, at random times (default 0.4 'gallery pace'; 1.7 = sea level)")
-    p.add_argument("--scheme", choices=["rotate", "pumpkin"], default="rotate",
-                   help="rotate = warm, cool, pride in turn (default); pumpkin = only jack-o'-lanterns")
+    p.add_argument("--scheme", choices=["rotate"] + SCHEME_ORDER + ["pumpkin"], default="rotate",
+                   help="rotate = warm, cool, pride in turn (default); warm, cool or pride = only that "
+                        "scheme's ripples; pumpkin = only jack-o'-lanterns")
     p.add_argument("--brightness", type=float, default=1.0, help="brightness 0..1 (default 1.0)")
     p.add_argument("--duration", type=float, default=0, help="stop after this many seconds (default 0 = run until Ctrl+C)")
     p.add_argument("--pin", type=int, default=18, help="BCM GPIO number of the data line (default 18 = header pin 12)")
@@ -393,10 +396,10 @@ def main():
             if args.duration and now - start >= args.duration:
                 break
             if now >= next_drop:
-                if args.scheme == "pumpkin":
-                    scheme = "pumpkin"
-                else:
+                if args.scheme == "rotate":
                     scheme = SCHEME_ORDER[count % len(SCHEME_ORDER)]
+                else:
+                    scheme = args.scheme
                 drop = Drop(now, scheme, muon_energy(rng), stripe % len(PRIDE))
                 if scheme == "pride":
                     stripe += 1

@@ -22,7 +22,8 @@ Every drop works the way it does in Muon Ripple:
   9 MeV typical, and that sets how bright the drop is. About 7 % of drops are over 15.5 MeV
   and get the scheme's **rare** colour.
 
-The colour scheme changes on **every drop**: warm → cool → pride → warm …
+By default the colour scheme changes on **every drop**: warm → cool → pride → warm … To run
+just one scheme, use `--scheme warm`, `--scheme cool` or `--scheme pride`.
 
 | Scheme | Typical | Rare |
 |---|---|---|
@@ -160,7 +161,7 @@ drop    3 | pride   | rare    |  17.2 MeV | brightness x1.60
 
 | Option | Default | What it does |
 |---|---|---|
-| `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn; `pumpkin` = only jack-o'-lanterns |
+| `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn. `warm`, `cool` or `pride` = only that scheme's ripples. `pumpkin` = only jack-o'-lanterns. |
 | `--rate R` | `0.4` | average drops per second, at random times. `1.7` = sea level. |
 | `--brightness B` | `1.0` | overall brightness from 0 to 1 (e.g. `0.25`) |
 | `--duration S` | `0` | stop after *S* seconds (`0` = run until Ctrl+C) |
@@ -174,6 +175,7 @@ Examples:
 
 ```bash
 python3 ring_test.py --rate 1.7             # real sea-level muon rate
+python3 ring_test.py --scheme cool          # only cool ripples (also: warm, pride)
 python3 ring_test.py --scheme pumpkin       # jack-o'-lanterns 🎃
 python3 ring_test.py --brightness 0.25      # dimmer, to see when light stops getting through
 python3 ring_test.py --seed 42              # same drops every time: swap covers and compare
