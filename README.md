@@ -21,6 +21,10 @@ Every drop works the way it does in Muon Ripple:
 - **Brightness and colour:** each drop gets a simulated muon energy. Most are 6–15 MeV, about
   9 MeV typical, and that sets how bright the drop is. About 7 % of drops are over 15.5 MeV
   and get the scheme's **rare** colour.
+- **Gamma:** colours, fades and glitter are worked out in display units, as on the
+  simulation page, and turned into LED drive levels with a 2.2 gamma, as the Muon Ripple
+  board does. A fading ring dims the way it looks on the page instead of lingering at the
+  bottom of the LEDs' range. Overlapping ripples add up before the gamma, as on the board.
 
 By default the colour scheme changes on **every drop**: warm → cool → pride → warm … To run
 just one scheme, use `--scheme warm`, `--scheme cool` or `--scheme pride`.
@@ -31,8 +35,25 @@ just one scheme, use `--scheme warm`, `--scheme cool` or `--scheme pride`.
 | cool | `#6fd8ff` | `#b996ff` |
 | pride | the next stripe: `#ff3b3b` `#ff9a1f` `#ffe733` `#2fd16a` `#3d7bff` `#b05cff` | a full rainbow round the ring |
 
-Pride ripples also throw off white glitter where the ring passes, as in the artifact. The
-artifact's fourth scheme, "bloody", is a splatter, not a ripple, so it's left out.
+Pride ripples also throw off white glitter where the ring passes, as in the artifact.
+
+### 🩸 Blood: `--scheme bloody`
+
+```bash
+./quickstart.sh --scheme bloody
+```
+
+The artifact's fourth scheme. Every drop **splats** where it lands instead of rippling: a
+lumpy blob with tapering spikes, droplets at some spike tips and a few stray satellites,
+seeded from the drop so each one is its own shape.
+
+- It lands as the ripple's 8 mm impact circle and spreads to the full splatter in 0.18 s,
+  fast at first and then settling. The wet centre glistens for about the first second.
+- It stays fresh red for 0.45 s, then dries through dark red to black over 3.3 s, in one
+  smooth curve with no hold.
+- Newer splats land on top of older ones, covering them where they overlap.
+- Rare drops (over 15.5 MeV) splat bigger.
+- Splats are mostly red, so they draw well under 1.5 A even at 1.7 drops/s.
 
 ### 🎃 Halloween: `--scheme pumpkin`
 
@@ -206,7 +227,7 @@ drop    3 | pride         | rare    |  17.2 MeV | brightness x1.60
 
 | Option | Default | What it does |
 |---|---|---|
-| `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn. `warm`, `cool` or `pride` = only that scheme's ripples. `pumpkin` = orange jack-o'-lanterns. `pumpkin-warm`, `pumpkin-cool`, `pumpkin-pride` = jack-o'-lanterns in that scheme's colours. `soccer` = soccer balls. |
+| `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn. `warm`, `cool` or `pride` = only that scheme's ripples. `bloody` = splats that dry to black. `pumpkin` = orange jack-o'-lanterns. `pumpkin-warm`, `pumpkin-cool`, `pumpkin-pride` = jack-o'-lanterns in that scheme's colours. `soccer` = soccer balls. |
 | `--rate R` | `0.4` | average drops per second, at random times. `1.7` = sea level. |
 | `--brightness B` | `1.0` | overall brightness from 0 to 1 (e.g. `0.25`) |
 | `--duration S` | `0` | stop after *S* seconds (`0` = run until Ctrl+C) |
@@ -221,6 +242,7 @@ Examples:
 ```bash
 python3 ring_test.py --rate 1.7             # real sea-level muon rate
 python3 ring_test.py --scheme cool          # only cool ripples (also: warm, pride)
+python3 ring_test.py --scheme bloody        # splats that dry to black
 python3 ring_test.py --scheme pumpkin       # jack-o'-lanterns 🎃
 python3 ring_test.py --scheme pumpkin-pride # rainbow jack-o'-lanterns, with sparkles
 python3 ring_test.py --scheme soccer        # soccer balls ⚽
@@ -233,13 +255,13 @@ python3 ring_test.py --preview              # try it out without the panel
 
 At full white, 256 NeoPixels can draw around 15 A, and a 4 A supply can't deliver that. The
 script estimates each frame's current conservatively (20 mA per colour channel at full,
-1 mA idle per LED), and if a frame would go over `--max-amps` (3.5 A, leaving headroom on a
-4 A supply) it dims that frame just enough to fit and logs `POWER-LIMITED` (at most once a
-second, and only for dips of 1 % or more).
+1 mA idle per LED) from the actual drive levels, after the gamma, and if a frame would go
+over `--max-amps` (3.5 A, leaving headroom on a 4 A supply) it dims that frame just enough to
+fit and logs `POWER-LIMITED` (at most once a second, and only for dips of 1 % or more).
 
-- At the default 0.4 drops/s this almost never happens: under 1 % of frames, when two bright
-  drops overlap, and only briefly.
-- At `--rate 1.7`, drops overlap more and about 1 frame in 7 gets dimmed a little.
+- At the default 0.4 drops/s this doesn't happen: no frame was dimmed in a 2-minute run.
+- At `--rate 1.7`, drops overlap more and about 1 frame in 100 gets dimmed a little, when
+  several bright rings meet.
 - Pumpkins and soccer balls don't lean on the limiter: each one's brightness is fitted when
   it lands (see the Halloween section). The limiter only nudges things by a fraction of a
   percent while one hands over to the next, and dips that small aren't logged.
@@ -251,7 +273,11 @@ If you use a bigger supply, raise `--max-amps` to about 90 % of its rating.
 - The ripples land between the four middle LEDs and spread symmetrically, so they look the
   same whichever corner the data enters and whichever way the rows run. (In the artifact, a
   drop lands wherever the muon hit. Here every drop lands in the centre.)
-- Frames are sent at about 50 per second, and each one takes a few milliseconds to work out.
+- Frames are sent at about 60 per second, as on the Muon Ripple board, and each one takes a
+  few milliseconds to work out. A splat's shape is worked out once as it lands, which takes a
+  few milliseconds more.
+- `--preview` undoes the gamma, so the terminal shows the panel as it looks, not its raw
+  drive levels.
 - Adafruit's Pi 5 NeoPixel examples use `byteorder="BGR"`. The driver sends bytes in buffer
   order, so for standard GRB NeoPixels that swaps red and blue. Their rainbow demos hide it.
   This script writes GRB directly.

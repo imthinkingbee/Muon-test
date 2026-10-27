@@ -23,6 +23,15 @@ The colour scheme changes on every drop, warm -> cool -> pride -> warm ...
 
 --scheme warm, cool or pride runs only that scheme's ripples.
 
+--scheme bloody swaps the ripples for Muon Ripple's blood: each drop splats where it
+lands (a seeded, lumpy splat with spikes and droplets), spreading from the ripple's
+8 mm impact circle in 0.18 s, then dries from fresh red through dark red to black over
+3.3 s with no hold. Newer splats land on top of older ones. Rare drops splat bigger.
+
+Colours, fades and glitter are worked out in display units and turned into LED drive
+levels with a 2.2 gamma, as the Muon Ripple board does, so a ring dims the way it looks
+on the simulation page instead of lingering at the bottom of the LEDs' range.
+
 --scheme pumpkin swaps the ripples for Halloween: each drop grows a jack-o'-lantern
 from a dot at the centre to full panel size in 0.9 s, holds it, then fades it out.
 --scheme pumpkin-warm, pumpkin-cool and pumpkin-pride colour the pumpkin's body like
@@ -43,6 +52,7 @@ import argparse
 import math
 import random
 import signal
+import struct
 import sys
 import time
 
@@ -50,7 +60,8 @@ import time
 N = 16                       # 16 x 16 LEDs
 CENTRE = (N - 1) / 2         # 7.5: ripples land between the 4 middle LEDs
 PITCH = 10.0                 # mm between LEDs
-FPS = 50
+FPS = 60                     # as the Muon Ripple board
+GAMMA = 2.2                  # display units -> LED drive levels (linear light)
 
 # ---- power model (WS2812B, conservative) ------------------------------------
 MA_PER_CHANNEL = 20.0        # mA per colour channel at 255 (~60 mA per LED at full white)
@@ -78,6 +89,18 @@ FULL, HOT = 0.9 * MUON_PEAK, 1.8 * MUON_PEAK   # full brightness / rare colour f
 
 # ---- glitter on pride ripples (Muon Ripple design) ------------------------------
 GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "peak": 230, "tint": 0.35}
+
+# ---- blood (Muon Ripple design) -------------------------------------------------------
+# A drop from the ceiling splats on the lid: it lands as the ripple's impact circle and
+# spreads to the full splatter on an ease-out, then one continuous curve takes it from
+# fresh through dried to black, with no hold.
+BLOOD = {"fresh": (240, 16, 22), "gloss": (255, 70, 60), "dried": (100, 14, 10),
+         "land": 0.18, "wet": 0.45, "dry": 3.3}
+BLOOD_LIFE = BLOOD["wet"] + BLOOD["dry"]
+BLOOD_IMPACT = 8.0                         # mm
+BLOOD_SAMPLES = 3                          # coverage samples per LED cell, each way
+# quadratic Bezier fresh -> black whose midpoint is the dried colour
+BLOOD_CTRL = tuple(2 * d - 0.5 * f for d, f in zip(BLOOD["dried"], BLOOD["fresh"]))
 
 # ---- shapes: pumpkins and the soccer ball --------------------------------------------
 # Pixel art on the panel's own 16x16 grid, so at full size every LED is cleanly lit or
@@ -183,6 +206,37 @@ def muon_energy(rng):
     return 1.8 * path * max(0.3, 1 + 0.12 * lam)
 
 
+def clamp(v, lo, hi):
+    return lo if v < lo else hi if v > hi else v
+
+
+def smooth(x):
+    return x * x * (3 - 2 * x)
+
+
+def to_drive(v):
+    """Display units (0..255, as the simulation page draws) -> LED drive level (0..255)."""
+    return 255.0 * clamp(v / 255.0, 0.0, 1.0) ** GAMMA
+
+
+def blood_colour(t):
+    """Splat colour t s after landing: fresh, then drying through dark red to black."""
+    u = smooth(clamp((t - BLOOD["wet"]) / BLOOD["dry"], 0.0, 1.0))   # eases out of fresh and into black
+    a, b = (1 - u) * (1 - u), 2 * (1 - u) * u
+    return tuple(a * f + b * c for f, c in zip(BLOOD["fresh"], BLOOD_CTRL))
+
+
+def mulberry32(a):
+    """Seeded uniform 0..1: a splat keeps its shape."""
+    def rand():
+        nonlocal a
+        a = (a + 0x6D2B79F5) & 0xFFFFFFFF
+        t = ((a ^ (a >> 15)) * (a | 1)) & 0xFFFFFFFF
+        t = ((t + (((t ^ (t >> 7)) * (t | 61)) & 0xFFFFFFFF)) & 0xFFFFFFFF) ^ t
+        return ((t ^ (t >> 14)) & 0xFFFFFFFF) / 4294967296
+    return rand
+
+
 def hsv(h):
     """Full-saturation hue 0..1 -> (r, g, b) 0..255."""
     def f(n):
@@ -201,11 +255,67 @@ for _j in range(N):
         LEDS.append((_i, _j, math.hypot(_x, _y), hsv(_h)))
 
 
+class Splat:
+    """A blood splat landing at the panel's centre: a lumpy blob (random harmonics on its
+    radius), tapering spikes, droplets at some spike tips and stray satellites, and how
+    much of each LED's 10 mm cell it covers. Worked out once, when the drop lands."""
+
+    HARM = (2, 3, 4, 5, 7)
+
+    def __init__(self, seed, energy, hot):
+        rand = mulberry32(seed)
+
+        def u(lo, hi):
+            return lo + (hi - lo) * rand()
+        big = 1.3 if hot else 1.0
+        r0 = self.r0 = clamp(15 * math.sqrt(energy / MUON_PEAK), 10, 26) * big
+        self.harm = [(k, u(0, 0.3 / math.sqrt(k)), u(0, 2 * math.pi)) for k in self.HARM]
+        self.spikes = [(u(0, 2 * math.pi), u(0.08, 0.2) * r0, r0 * u(1.3, 2.7))
+                       for _ in range(int(u(5, 11) * big + 0.5))]
+        self.drops = []
+        for th, _w, length in self.spikes:
+            if rand() < 0.5:
+                self.drops.append((length * math.cos(th), length * math.sin(th), u(1.5, 3.5)))
+        for k in range(int(u(3, 9) * big + 0.5)):     # satellites, mostly along the spikes
+            th = self.spikes[k % len(self.spikes)][0] + u(-0.2, 0.2) if rand() < 0.6 else u(0, 2 * math.pi)
+            d = r0 * u(1.7, 3.5)
+            self.drops.append((d * math.cos(th), d * math.sin(th), u(1.2, 4.5)))
+        self.reach = max([r0 * 1.5] + [length for _th, _w, length in self.spikes]
+                         + [math.hypot(x, y) + r for x, y, r in self.drops])
+        s = BLOOD_SAMPLES
+        self.cover = []
+        for i, j, dist, _rainbow in LEDS:
+            hit = 0
+            if dist <= self.reach + PITCH:
+                cx, cy = (i - CENTRE) * PITCH, (CENTRE - j) * PITCH
+                for a in range(s):
+                    for b in range(s):
+                        hit += self.inside(cx + ((a + 0.5) / s - 0.5) * PITCH, cy + ((b + 0.5) / s - 0.5) * PITCH)
+            self.cover.append(hit / (s * s))
+
+    def inside(self, dx, dy):
+        r, th = math.hypot(dx, dy), math.atan2(dy, dx)
+        rb = self.r0 + sum(self.r0 * a * math.cos(k * th + p) for k, a, p in self.harm)
+        if r < rb:
+            return True
+        for sth, w, length in self.spikes:
+            if r > length:
+                continue
+            dth = abs((th - sth + 3 * math.pi) % (2 * math.pi) - math.pi)
+            if dth * r < w * (1 - r / length) + 0.4:       # a streak tapering to its tip
+                return True
+        return any(math.hypot(dx - x, dy - y) < r for x, y, r in self.drops)
+
+
 class Drop:
     def __init__(self, t0, scheme, energy, stripe):
         self.t0, self.scheme, self.e = t0, scheme, energy
         self.hot = energy > HOT
         self.shape = "pumpkin" if scheme.startswith("pumpkin") else "soccer" if scheme == "soccer" else None
+        # Seeded from the drop itself, not the run's random numbers, so drop timing is unchanged.
+        seed = (struct.unpack("<I", struct.pack("<f", energy))[0] * 2654435761) & 0xFFFFFFFF
+        self.splat = Splat(seed, energy, self.hot) if scheme == "bloody" else None
+        self.life = BLOOD_LIFE if self.splat else LIFE
         # Shapes stop at 1x: above that colours clip (the orange would turn yellow).
         self.amp = min(1.0 if self.shape else 1.6, energy / FULL)
         self.stripe = stripe
@@ -232,7 +342,10 @@ class Drop:
 
 
 class Ripples:
-    """The panel's light field: active drops plus pride glitter, as Muon Ripple draws them."""
+    """The panel's light field: active drops plus pride glitter, as Muon Ripple draws them.
+    Ripples, glitter and splats are added up in display units and gamma-corrected to LED
+    drive levels; overlapping ripples add, and each splat lands on top of what's there.
+    Shapes are pixel art drawn straight in drive levels, as before."""
 
     def __init__(self, rng, level=1.0, max_amps=None):
         self.rng = rng
@@ -261,15 +374,19 @@ class Ripples:
         self.drops.append(drop)
 
     def frame(self, now):
-        """Returns frame[y][x] = [r, g, b] (may exceed 255; clipped on output)."""
+        """Returns frame[y][x] = [r, g, b] in LED drive levels (may exceed 255; clipped on output)."""
         dt = 0.0 if self.last is None else min(0.1, now - self.last)
         self.last = now
-        px = [[[0.0, 0.0, 0.0] for _ in range(N)] for _ in range(N)]
-        self.drops = [d for d in self.drops if now - d.t0 <= LIFE]
-        for d in self.drops:
+        disp = [[[0.0, 0.0, 0.0] for _ in range(N)] for _ in range(N)]   # display units
+        drive = [[[0.0, 0.0, 0.0] for _ in range(N)] for _ in range(N)]  # shapes, already drive levels
+        self.drops = [d for d in self.drops if now - d.t0 <= d.life]
+        for d in self.drops:                   # oldest first: a newer splat lands on top
             t = now - d.t0
             if d.shape:
-                self._shape(px, d, t, now, dt)
+                self._shape(drive, d, t, now, dt)
+                continue
+            if d.splat:
+                self._splat(disp, d, t)
                 continue
             fade = math.exp(-t / (FADE / 2.2))
             r0 = RING_V * t
@@ -281,7 +398,7 @@ class Ripples:
                 edge = 1 - min(1.0, dist / EDGE)
                 v = d.amp * fade * (ring * edge + core)
                 col = d.colour(rainbow)
-                p = px[j][i]
+                p = disp[j][i]
                 p[0] += v * col[0]
                 p[1] += v * col[1]
                 p[2] += v * col[2]
@@ -296,13 +413,41 @@ class Ripples:
             env = (t / GLITTER["rise"] if t < GLITTER["rise"]
                    else math.exp(-(t - GLITTER["rise"]) / GLITTER["tau"])) * strength
             i, j = LEDS[n][0], LEDS[n][1]
-            p = px[j][i]
+            p = disp[j][i]
             for k in range(3):
                 p[k] += env * GLITTER["peak"] / 255 * c[k]
-        return px
+        for j in range(N):
+            for i in range(N):
+                p, q = disp[j][i], drive[j][i]
+                for k in range(3):
+                    q[k] += to_drive(p[k])
+        return drive
+
+    def _splat(self, px, d, t):
+        """Lay a blood splat over the frame: it spreads out from the solid impact circle on
+        an ease-out, glistens while wet, and dries to black."""
+        sp = d.splat
+        ease = 1 - (1 - max(0.0, t) / BLOOD["land"]) ** 3 if t < BLOOD["land"] else 1.0
+        rho = BLOOD_IMPACT + (sp.reach - BLOOD_IMPACT) * ease
+        shine = 1 - smooth(clamp(t / (BLOOD["wet"] + 0.4), 0.0, 1.0))
+        col = blood_colour(t)
+        for n, (i, j, dist, _rainbow) in enumerate(LEDS):
+            a = sp.cover[n]
+            if ease < 1:
+                a *= clamp((rho - dist) / PITCH + 0.5, 0.0, 1.0)
+                a = max(a, clamp(1 - (dist - BLOOD_IMPACT) / PITCH, 0.0, 1.0) * (1 - ease))
+            if a <= 0:
+                continue
+            c = col
+            if shine > 0:
+                w = shine * math.exp(-((dist / (0.45 * sp.r0)) ** 2))
+                c = tuple(v + (g - v) * w for v, g in zip(col, BLOOD["gloss"]))
+            p = px[j][i]
+            for k in range(3):
+                p[k] = c[k] * a + p[k] * (1 - a)
 
     def _shape(self, px, d, t, now, dt):
-        """Add a growing shape: each LED shows the average of the art under it."""
+        """Add a growing shape in drive levels: each LED shows the average of the art under it."""
         level = shape_level(t)
         if d.replaced_at is not None:
             level *= math.exp(-max(0.0, now - d.replaced_at) / SHAPE_HANDOVER)
@@ -394,14 +539,15 @@ class TerminalPreview:
         self.drawn = False
 
     def show(self, frame, level, layout):
-        # Decode the exact bytes the panel would get, so the preview also checks encode().
+        # Decode the exact bytes the panel would get, so the preview also checks encode(),
+        # then undo the gamma: the terminal shows display units, the panel emits linear light.
         buf = encode(frame, level, layout)
         lines = []
         for y in range(N):
             row = []
             for x in range(N):
                 i = 3 * xy_to_index(x, y, layout)
-                g, r, b = buf[i], buf[i + 1], buf[i + 2]
+                g, r, b = (round(255 * (c / 255) ** (1 / GAMMA)) for c in buf[i:i + 3])
                 row.append(f"\x1b[48;2;{r};{g};{b}m  ")
             lines.append("".join(row) + "\x1b[0m")
         if self.drawn:
@@ -423,10 +569,11 @@ def main():
     p = argparse.ArgumentParser(description="Muon-ripple opacity test for a 16x16 NeoPixel panel on a Pi 5.")
     p.add_argument("--rate", type=float, default=0.4,
                    help="average drops per second, at random times (default 0.4 'gallery pace'; 1.7 = sea level)")
-    p.add_argument("--scheme", choices=["rotate"] + SCHEME_ORDER + ["pumpkin"]
+    p.add_argument("--scheme", choices=["rotate"] + SCHEME_ORDER + ["bloody", "pumpkin"]
                    + [f"pumpkin-{s}" for s in SCHEME_ORDER] + ["soccer"], default="rotate",
                    help="rotate = warm, cool, pride in turn (default); warm, cool or pride = only that "
-                        "scheme's ripples; pumpkin = orange jack-o'-lanterns; pumpkin-warm, "
+                        "scheme's ripples; bloody = splats that dry to black; "
+                        "pumpkin = orange jack-o'-lanterns; pumpkin-warm, "
                         "pumpkin-cool, pumpkin-pride = jack-o'-lanterns in that scheme's colours; "
                         "soccer = soccer balls")
     p.add_argument("--brightness", type=float, default=1.0, help="brightness 0..1 (default 1.0)")
@@ -478,8 +625,9 @@ def main():
                 count += 1
                 kind = "" if scheme in ("pumpkin", "soccer") else ("rare" if drop.hot else "typical")
                 fit = f" | fitted to {drop.fit:.0%} for the power limit" if drop.fit < 1 else ""
+                bright = "" if drop.splat else f" | brightness x{drop.amp:.2f}"   # a splat's colour is fixed
                 log(f"drop {count:4d} | {scheme:13s} | {kind:7s} | "
-                    f"{drop.e:5.1f} MeV | brightness x{drop.amp:.2f}{fit}", out)
+                    f"{drop.e:5.1f} MeV{bright}{fit}", out)
                 next_drop = now + rng.expovariate(args.rate)
             frame = field.frame(now)
             level = args.brightness * power_scale(frame, args.brightness, args.max_amps)
