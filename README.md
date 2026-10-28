@@ -47,29 +47,30 @@ The artifact's fourth scheme. Every drop **splats** where it lands instead of ri
 lumpy blob with tapering spikes, droplets at some spike tips and a few stray satellites,
 seeded from the drop so each one is its own shape.
 
-- It lands as the ripple's 8 mm impact circle and spreads to the full splatter in 0.18 s,
-  fast at first and then settling.
-- It stays fresh red for 0.45 s, then dries through dark red to black in one smooth curve
-  with no hold, gone about 2.2 s after landing.
+- **Fresh:** it lands as the ripple's 8 mm impact circle and spreads to the full splatter
+  in 0.18 s, fast at first and then settling, then holds, fresh and wet, until 0.45 s.
+- **Drying:** over the next 0.9 s it turns from fresh red to dried red, a darker red that
+  still reads as a solid splat, and loses its sheen.
+- **Fading:** over the last 1.8 s the dried splat fades to black, slowly at first. It's gone
+  3.15 s after landing.
+- It runs at 0.7 of the page's brightness, since a solid splat reads much brighter than a
+  thin ring, and in pure red. The page's colours carry a touch of green and blue, which on
+  the LEDs rounds to level 1 of 255 and shows in a dim room as a pink tint.
+- `--sheen` is the lighting on the wet splat, held while it's fresh and gone in the first
+  part of the drying (dried blood is matte):
+  - `glow` (default): subtle; its centre goes part way to a brighter red.
+  - `spec`: highly specular. The LED where a light up and to the north-west would glint,
+    about a third of the splat's radius from the impact, goes white, and the cover blends
+    it into a highlight on the red. If the glint falls between two LEDs it's shared.
+  - `none`: no sheen.
 - The end of the fade is tuned for the LEDs, whose bottom few levels are far apart (in a dim
   room even level 1 of 255 shows):
   - The splat's partial coverage of an LED's cell scales its light, after the gamma. A
     half-covered LED gives half the light, not 0.5^2.2 ≈ 22 %, so the dim edge LEDs don't
     drop out long before the rest and the splat doesn't shrink LED by LED.
-  - The fade is one multiplier on every LED's light: the page's curve after the gamma, less
-    an offset of 10 % of the fresh level. It looks the same until near the end, then reaches
+  - The fade is one multiplier on every LED's light, less a small offset, so it reaches
     black on a straight line instead of easing in. Each of the last few levels holds for
-    1–2 frames, and the whole splat goes dark within about 0.1 s.
-- It runs at 0.7 of the page's brightness, since a solid splat reads much brighter than a
-  thin ring, and in pure red. The page's colours carry a touch of green and blue, which on
-  the LEDs rounds to level 1 of 255 and shows in a dim room as a pink tint.
-- While it's wet, for about its first 0.85 s, it catches the light. `--sheen` picks how:
-  - `glow` (default): its centre goes part way to a brighter red.
-  - `spec`: a specular glint. The LED where a light up and to the north-west would catch
-    the splat, about a third of its radius from the impact, flashes white as it lands and
-    fades back to the red over 0.35 s. The cover blends it into a highlight on the red. If
-    the glint falls between two LEDs it's shared between them.
-  - `none`: no sheen.
+    about 3 frames, and the whole splat goes dark within about 0.2 s.
 - Newer splats land on top of older ones, covering them where they overlap.
 - Rare drops (over 15.5 MeV) splat bigger.
 - Splats are mostly red, so they draw well under 1.5 A even at 1.7 drops/s.
