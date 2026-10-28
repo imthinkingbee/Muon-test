@@ -54,8 +54,9 @@ seeded from the drop so each one is its own shape.
   panel between the two is that blending, or the splat's partial coverage of a cell.
 - **Fresh:** it lands as the ripple's 8 mm impact circle and spreads to the full splatter
   in 0.18 s, fast at first and then settling, then holds until 0.45 s.
-- **Fading (0.45–3.05 s):** the whole splat fades out together on a quadratic ease-in on its
-  light: gentle out of the hold and fastest at the end, so the last levels go by quickly.
+- **Fading (from 0.45 s):** the whole splat fades out together the way the ripples do, an
+  exponential decay on its display brightness, with the ripples' own time constant, through
+  the same gamma; gone by about 2.2 s.
 - It's pure red: the page's colours carry a touch of green and blue, which on the LEDs
   rounds to level 1 of 255 and shows in a dim room as a pink tint.
 - Newer splats land on top of older ones, covering them where they overlap.

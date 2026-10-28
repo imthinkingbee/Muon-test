@@ -27,7 +27,8 @@ The colour scheme changes on every drop, warm -> cool -> pride -> warm ...
 lands (a seeded, lumpy splat with spikes and droplets), spreading from the ripple's
 8 mm impact circle in 0.18 s. It's drawn in two colours, a body at drive 31 and a small
 highlight at drive 102, and projected onto the grid by area. It holds until 0.45 s, then
-fades out as a whole on a quadratic ease-in, fastest at the end, gone by 3.05 s. Pure red. Newer splats land on
+fades out as a whole the way the ripples do, an exponential decay on its display
+brightness, gone by about 2.2 s. Pure red. Newer splats land on
 top of older ones; rare drops splat bigger.
 
 Colours, fades and glitter are worked out in display units and turned into LED drive
@@ -106,24 +107,25 @@ GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "
 #   highlight  pure red at drive 102, the brightest colour: a small disc a light up and to
 #              the north-west would catch on the wet surface
 # It lands as the ripple's impact circle and spreads to the full splatter on an ease-out
-# (0.18 s), holds until 0.45 s, then the whole splat fades out together by 3.05 s, on a
-# quadratic ease-in on its light (drive levels): gentle out of the hold, fastest at the end,
-# so the last levels go by quickly.
+# (0.18 s), holds until 0.45 s, then the whole splat fades out together the way the ripples
+# do: an exponential decay on its display brightness (time constant `fade`), through the
+# same gamma, until even the highlight rounds to off.
 # On the panel the splat is pure red: any green or blue rounds to level 1 on the LEDs and
 # reads pink in a dim room.
 BLOOD = {"highlight": 102.0, "body": 31.0,   # drive levels, before projection
          "spot": (0.25, 0.3),             # highlight disc: centre towards the light, radius; in splat radii
-         "land": 0.18, "wet": 0.45, "fade": 2.6}
+         "land": 0.18, "wet": 0.45, "fade": FADE / 2.2}   # the ripples' own fade constant
 BLOOD_IMPACT = 8.0                         # mm
 BLOOD_SAMPLES = 3                          # coverage samples per LED cell, each way, for the splat
 SPOT_SAMPLES = 6                           # ... and for the highlight disc
-BLOOD_END = BLOOD["wet"] + BLOOD["fade"]
+# gone once the highlight's drive rounds to off
+BLOOD_END = BLOOD["wet"] - BLOOD["fade"] * math.log((0.5 / BLOOD["highlight"]) ** (1 / GAMMA))
 
 
 def blood_fade(t):
     """Drive multiplier for the whole splat t s after landing: 1 while fresh, then to 0."""
-    y = clamp((t - BLOOD["wet"]) / BLOOD["fade"], 0.0, 1.0)
-    return 1 - y * y                                             # ease-in on the light: fastest at the end
+    q = math.exp(-max(0.0, t - BLOOD["wet"]) / BLOOD["fade"])   # display brightness, as the ripples fade
+    return q ** GAMMA
 
 
 # ---- shapes: pumpkins and the soccer ball --------------------------------------------
@@ -449,14 +451,14 @@ class Ripples:
                     g = d.amp * fade * (ring + (GLITTER["wake"] if dist < r0 else 0)) * edge
                     if g > 0.05 and self.rng.random() < GLITTER["rate"] * (1.5 if d.hot else 1) * g * dt:
                         c = tuple((1 - GLITTER["tint"]) * 245 + GLITTER["tint"] * ch for ch in col)
-                        self.sparkles.append([n, now, c, 0.6 + 0.4 * self.rng.random()])
+                        self.sparkles.append([n, now, c, 0.6 + 0.4 * self.rng.random(), "disp"])
         self.sparkles = [s for s in self.sparkles if now - s[1] <= GLITTER["life"]]
-        for n, t0, c, strength in self.sparkles:
+        for n, t0, c, strength, into in self.sparkles:
             t = now - t0
             env = (t / GLITTER["rise"] if t < GLITTER["rise"]
                    else math.exp(-(t - GLITTER["rise"]) / GLITTER["tau"])) * strength
             i, j = LEDS[n][0], LEDS[n][1]
-            p = disp[j][i]
+            p = (disp if into == "disp" else drive)[j][i]   # a ripple's glitter in display units; a pumpkin's in drive
             for k in range(3):
                 p[k] += env * GLITTER["peak"] / 255 * c[k]
         for j in range(N):
@@ -519,7 +521,7 @@ class Ripples:
                         self.rng.random() < SHAPE_GLITTER * (1.5 if d.hot else 1) * d.amp * level * f * dt):
                     c = tuple((1 - GLITTER["tint"]) * 245 + GLITTER["tint"] * ch for ch in col)
                     # Dimmed with the pumpkin's power fit, so they stay in proportion to its body.
-                    self.sparkles.append([n, now, c, (0.6 + 0.4 * self.rng.random()) * d.fit])
+                    self.sparkles.append([n, now, c, (0.6 + 0.4 * self.rng.random()) * d.fit, "drive"])
 
 
 def xy_to_index(x, y, layout):
