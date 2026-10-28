@@ -94,9 +94,10 @@ GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "
 # A drop from the ceiling splats on the lid: it lands as the ripple's impact circle and
 # spreads to the full splatter on an ease-out, then one continuous curve takes it from
 # fresh through dried to black, with no hold.
-BLOOD = {"fresh": (240, 16, 22), "gloss": (255, 70, 60), "dried": (100, 14, 10),
+BLOOD = {"fresh": (240, 16, 22), "gloss": (255, 40, 12), "dried": (100, 14, 10),
          "land": 0.18, "wet": 0.45, "dry": 3.3,
-         "level": 0.7}                     # scales the colours: a solid splat reads brighter than a ring
+         "level": 0.7,                     # scales the colours: a solid splat reads brighter than a ring
+         "shine": 0.6}                     # how far the wet centre goes towards the gloss colour
 BLOOD_LIFE = BLOOD["wet"] + BLOOD["dry"]
 BLOOD_IMPACT = 8.0                         # mm
 BLOOD_SAMPLES = 3                          # coverage samples per LED cell, each way
@@ -441,7 +442,7 @@ class Ripples:
                 continue
             c = col
             if shine > 0:
-                w = shine * math.exp(-((dist / (0.45 * sp.r0)) ** 2))
+                w = BLOOD["shine"] * shine * math.exp(-((dist / (0.45 * sp.r0)) ** 2))
                 c = tuple(v + (g - v) * w for v, g in zip(col, (BLOOD["level"] * g for g in BLOOD["gloss"])))
             p = px[j][i]
             for k in range(3):
