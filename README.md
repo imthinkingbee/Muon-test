@@ -47,10 +47,14 @@ The artifact's fourth scheme. Every drop **splats** where it lands instead of ri
 lumpy blob with tapering spikes, droplets at some spike tips and a few stray satellites,
 seeded from the drop so each one is its own shape.
 
-- It lands as the ripple's 8 mm impact circle and spreads to the full splatter in 0.18 s,
+- It lands as the ripple's 8 mm impact circle and spreads to the full splatter in 0.3 s,
   fast at first and then settling. The wet centre glistens for about the first second.
-- It stays fresh red for 0.45 s, then dries through dark red to black over 3.3 s, in one
-  smooth curve with no hold.
+- It stays fresh red until it has landed (at least 0.45 s), then dries through dark red to
+  black in one smooth curve with no hold, 3.75 s in all.
+- Its colours run at 0.7 of the page's: a solid splat reads much brighter than a thin ring.
+- Behind a cover the landing blurs, so it needs to be slower than on the simulation page
+  (0.18 s) to read the same. Tune both on the panel:
+  `--splat-land 0.25` (seconds to spread) and `--splat-level 0.6` (0..1).
 - Newer splats land on top of older ones, covering them where they overlap.
 - Rare drops (over 15.5 MeV) splat bigger.
 - Splats are mostly red, so they draw well under 1.5 A even at 1.7 drops/s.
@@ -230,6 +234,8 @@ drop    3 | pride         | rare    |  17.2 MeV | brightness x1.60
 | `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn. `warm`, `cool` or `pride` = only that scheme's ripples. `bloody` = splats that dry to black. `pumpkin` = orange jack-o'-lanterns. `pumpkin-warm`, `pumpkin-cool`, `pumpkin-pride` = jack-o'-lanterns in that scheme's colours. `soccer` = soccer balls. |
 | `--rate R` | `0.4` | average drops per second, at random times. `1.7` = sea level. |
 | `--brightness B` | `1.0` | overall brightness from 0 to 1 (e.g. `0.25`) |
+| `--splat-land S` | `0.3` | `bloody`: seconds for a splat to spread to full size |
+| `--splat-level L` | `0.7` | `bloody`: splat colours as a share of the page's, 0 to 1 |
 | `--duration S` | `0` | stop after *S* seconds (`0` = run until Ctrl+C) |
 | `--seed N` | random | repeat exactly the same run of drops (handy for comparing two covers) |
 | `--max-amps A` | `3.5` | panel current limit (see below) |

@@ -25,8 +25,8 @@ The colour scheme changes on every drop, warm -> cool -> pride -> warm ...
 
 --scheme bloody swaps the ripples for Muon Ripple's blood: each drop splats where it
 lands (a seeded, lumpy splat with spikes and droplets), spreading from the ripple's
-8 mm impact circle in 0.18 s, then dries from fresh red through dark red to black over
-3.3 s with no hold. Newer splats land on top of older ones. Rare drops splat bigger.
+8 mm impact circle in 0.3 s (--splat-land), then dries from fresh red through dark red to
+black with no hold, 3.75 s in all, at 0.7 of the page's colours (--splat-level). Newer splats land on top of older ones. Rare drops splat bigger.
 
 Colours, fades and glitter are worked out in display units and turned into LED drive
 levels with a 2.2 gamma, as the Muon Ripple board does, so a ring dims the way it looks
@@ -94,9 +94,12 @@ GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "
 # A drop from the ceiling splats on the lid: it lands as the ripple's impact circle and
 # spreads to the full splatter on an ease-out, then one continuous curve takes it from
 # fresh through dried to black, with no hold.
+# On the panel, behind the cover, a splat needs a slower landing and dimmer colours than
+# on the simulation page (0.18 s, full colour) to look the same: --splat-land, --splat-level.
 BLOOD = {"fresh": (240, 16, 22), "gloss": (255, 70, 60), "dried": (100, 14, 10),
-         "land": 0.18, "wet": 0.45, "dry": 3.3}
-BLOOD_LIFE = BLOOD["wet"] + BLOOD["dry"]
+         "level": 0.7,                    # scales the colours: a solid splat reads brighter than a ring
+         "land": 0.3, "wet": 0.45, "dry": 3.3}
+BLOOD_TOTAL = 3.75                         # s, landing to black; drying starts once it has landed
 BLOOD_IMPACT = 8.0                         # mm
 BLOOD_SAMPLES = 3                          # coverage samples per LED cell, each way
 # quadratic Bezier fresh -> black whose midpoint is the dried colour
@@ -223,7 +226,7 @@ def blood_colour(t):
     """Splat colour t s after landing: fresh, then drying through dark red to black."""
     u = smooth(clamp((t - BLOOD["wet"]) / BLOOD["dry"], 0.0, 1.0))   # eases out of fresh and into black
     a, b = (1 - u) * (1 - u), 2 * (1 - u) * u
-    return tuple(a * f + b * c for f, c in zip(BLOOD["fresh"], BLOOD_CTRL))
+    return tuple(BLOOD["level"] * (a * f + b * c) for f, c in zip(BLOOD["fresh"], BLOOD_CTRL))
 
 
 def mulberry32(a):
@@ -315,7 +318,7 @@ class Drop:
         # Seeded from the drop itself, not the run's random numbers, so drop timing is unchanged.
         seed = (struct.unpack("<I", struct.pack("<f", energy))[0] * 2654435761) & 0xFFFFFFFF
         self.splat = Splat(seed, energy, self.hot) if scheme == "bloody" else None
-        self.life = BLOOD_LIFE if self.splat else LIFE
+        self.life = BLOOD["wet"] + BLOOD["dry"] if self.splat else LIFE
         # Shapes stop at 1x: above that colours clip (the orange would turn yellow).
         self.amp = min(1.0 if self.shape else 1.6, energy / FULL)
         self.stripe = stripe
@@ -431,6 +434,7 @@ class Ripples:
         rho = BLOOD_IMPACT + (sp.reach - BLOOD_IMPACT) * ease
         shine = 1 - smooth(clamp(t / (BLOOD["wet"] + 0.4), 0.0, 1.0))
         col = blood_colour(t)
+        gloss = tuple(BLOOD["level"] * g for g in BLOOD["gloss"])
         for n, (i, j, dist, _rainbow) in enumerate(LEDS):
             a = sp.cover[n]
             if ease < 1:
@@ -441,7 +445,7 @@ class Ripples:
             c = col
             if shine > 0:
                 w = shine * math.exp(-((dist / (0.45 * sp.r0)) ** 2))
-                c = tuple(v + (g - v) * w for v, g in zip(col, BLOOD["gloss"]))
+                c = tuple(v + (g - v) * w for v, g in zip(col, gloss))
             p = px[j][i]
             for k in range(3):
                 p[k] = c[k] * a + p[k] * (1 - a)
@@ -577,6 +581,10 @@ def main():
                         "pumpkin-cool, pumpkin-pride = jack-o'-lanterns in that scheme's colours; "
                         "soccer = soccer balls")
     p.add_argument("--brightness", type=float, default=1.0, help="brightness 0..1 (default 1.0)")
+    p.add_argument("--splat-land", type=float, default=BLOOD["land"],
+                   help="bloody: seconds for a splat to spread to full size (default %(default)s; the page uses 0.18)")
+    p.add_argument("--splat-level", type=float, default=BLOOD["level"],
+                   help="bloody: splat colours as a share of the page's, 0..1 (default %(default)s)")
     p.add_argument("--duration", type=float, default=0, help="stop after this many seconds (default 0 = run until Ctrl+C)")
     p.add_argument("--pin", type=int, default=18, help="BCM GPIO number of the data line (default 18 = header pin 12)")
     p.add_argument("--max-amps", type=float, default=3.5,
@@ -593,6 +601,13 @@ def main():
         p.error("--brightness must be above 0 and at most 1")
     if args.duration < 0:
         p.error("--duration can't be negative")
+    if not 0 < args.splat_land < BLOOD_TOTAL:
+        p.error(f"--splat-land must be above 0 and under {BLOOD_TOTAL} s")
+    if not 0 < args.splat_level <= 1:
+        p.error("--splat-level must be above 0 and at most 1")
+    BLOOD["land"], BLOOD["level"] = args.splat_land, args.splat_level
+    BLOOD["wet"] = max(0.45, args.splat_land)             # fresh until it has landed
+    BLOOD["dry"] = BLOOD_TOTAL - BLOOD["wet"]
     if args.max_amps <= N * N * MA_IDLE_PER_LED / 1000.0:
         p.error(f"--max-amps must be above the panel's idle draw ({N * N * MA_IDLE_PER_LED / 1000.0:.2f} A)")
 
