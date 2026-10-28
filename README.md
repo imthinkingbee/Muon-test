@@ -48,21 +48,24 @@ lumpy blob with tapering spikes, droplets at some spike tips and a few stray sat
 seeded from the drop so each one is its own shape.
 
 - **Fresh:** it lands as the ripple's 8 mm impact circle and spreads to the full splatter
-  in 0.18 s, fast at first and then settling, then holds, fresh and wet, until 0.45 s. The
-  body sits at the dried level so its shape reads; a soft highlight, where a light up and
-  to the north-west would catch the wet surface, rises to full brightness.
-- **Drying:** the highlight flattens down to the body's level by 1.65 s. The body and the
-  outline don't change. The end state is the dried splat: the same shape, evenly lit.
-- **Fading:** the dried splat fades to black by 3.15 s.
-- The highlight follows one curve through drying and fading, so its speed carries straight
-  across the line between them, and the curve only ever speeds up: the body, still while
-  drying, picks up the same speed when fading starts, and nothing fades slower there. That
-  is also why drying takes a bit under half the time after the hold rather than a third: it
-  has to bring the highlight down to the body at no more than the speed fading starts at.
-- The curve is set on the LEDs' actual light and ends on a straight line, so the bottom
-  levels (in a dim room even level 1 of 255 shows) go by in a frame or two each instead of
-  stair-stepping. The splat's partial coverage of an LED's cell scales its light too, so a
-  half-covered LED gives half the light, not 0.5^2.2 ≈ 22 %.
+  in 0.18 s, fast at first and then settling, then holds, fresh and wet, until 0.45 s. A
+  soft highlight over the inner splat, where a light up and to the north-west would catch
+  the wet surface, is at full brightness; it falls away to a body just above the dried
+  level, so the shape reads.
+- **Drying:** the highlight falls at a steady speed to the dried level by about 1.9 s, and
+  every part of the splat comes down with it in proportion to how far above dried it
+  started: the bright inner splat flattens while the outline stays put. The end state is
+  the dried splat: the same shape, evenly lit.
+- **Fading:** the dried splat fades to black by about 3.2 s. It leaves at the highlight's
+  drying speed, so the brightest parts carry straight across from drying into fading, and
+  only ever speeds up: the dimmer parts, slower while drying, pick up speed there, and
+  nothing fades slower. For the highlight never to slow, drying takes about half the time
+  after the hold rather than a third: it has to bring the highlight down to dried no faster
+  than fading starts.
+- The fade is set on the LEDs' actual light and arrives at 40 levels per second, so the
+  bottom levels (in a dim room even level 1 of 255 shows) go by in a frame or two each, and
+  the whole splat goes dark together. Partial coverage of an LED's cell scales its light
+  too: a half-covered LED gives half the light, not 0.5^2.2 ≈ 22 %.
 - It runs at 0.7 of the page's brightness, since a solid splat reads much brighter than a
   thin ring, and in pure red. The page's colours carry a touch of green and blue, which on
   the LEDs rounds to level 1 of 255 and shows in a dim room as a pink tint.

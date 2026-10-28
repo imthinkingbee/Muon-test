@@ -25,14 +25,14 @@ The colour scheme changes on every drop, warm -> cool -> pride -> warm ...
 
 --scheme bloody swaps the ripples for Muon Ripple's blood: each drop splats where it
 lands (a seeded, lumpy splat with spikes and droplets), spreading from the ripple's
-8 mm impact circle in 0.18 s, and holds fresh and wet for 0.45 s: the body at the dried
-level so its shape reads, with a soft highlight where a light up and to the north-west
-would catch it. Drying flattens the highlight down to the body by 1.65 s, leaving the
-dried splat, same shape, evenly lit; it then fades to black by 3.15 s. The highlight's
-curve runs straight across from drying into fading and only ever speeds up, and ends on
-a straight line in the LEDs' actual light, so the splat goes dark all at once. Pure red,
-at 0.7 of the page's brightness. Newer splats land on top of older ones; rare drops
-splat bigger.
+8 mm impact circle in 0.18 s, and holds fresh and wet for 0.45 s: a soft highlight over
+the inner splat, where a light up and to the north-west would catch it, falling away to
+a body just above the dried level. Drying brings the highlight down at a steady speed to
+the dried level by about 1.9 s, the rest of the splat with it, outline unchanged: the
+dried splat, evenly lit. Fading then takes it to black by about 3.2 s, leaving at the
+highlight's drying speed and only ever speeding up, and ending fast enough in the LEDs'
+actual light that the last levels go by in a frame or two each. Pure red, at 0.7 of the
+page's brightness. Newer splats land on top of older ones; rare drops splat bigger.
 
 Colours, fades and glitter are worked out in display units and turned into LED drive
 levels with a 2.2 gamma, as the Muon Ripple board does, so a ring dims the way it looks
@@ -106,52 +106,47 @@ GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "
 # ---- blood (Muon Ripple design) -------------------------------------------------------
 # A drop from the ceiling splats on the lid:
 #   fresh   it lands as the ripple's impact circle and spreads to the full splatter on an
-#           ease-out, then holds, wet, as long as `wet`: the body at the dried level, so its
-#           shape reads, with a soft highlight (a light up and to the north-west catching the
-#           wet surface) up to full brightness
-#   drying  the highlight flattens down to the body's level; the body and the outline don't
-#           change. The end state is the dried splat: the same shape, evenly at the dried level
-#   fading  the dried splat fades to black
-# The highlight's brightness follows one curve across drying and fading, so its speed carries
-# straight across the line between them, and the curve only ever speeds up: the body, still
-# while drying, picks up the same speed when fading starts, and nothing fades slower there.
-# The curve is set on the LEDs' drive levels (linear light), less a small offset ("toe"), so
-# it reaches black on a straight line: the last levels go by in a frame or two each, and every
-# LED, partly covered or not, goes dark at the same moment. With the highlight never slowing,
-# drying takes a bit under half the time after the hold: it has to cover the highlight's drop
-# to the body level at no more than the speed fading starts at.
+#           ease-out, then holds, wet, as long as `wet`: a soft highlight over the inner splat
+#           (a light up and to the north-west on the wet surface) at full brightness, falling
+#           away to a body just above the dried level, so the shape reads
+#   drying  the highlight falls at a steady speed to the dried level and every LED comes down
+#           with it in proportion to its height above dried: the bright inner splat flattens
+#           while the outline stays put. The end state is the dried splat, evenly lit
+#   fading  the dried splat fades to black on a cubic in drive levels (linear light) that
+#           leaves at the highlight's drying speed, so its perceived speed carries straight
+#           across, only ever speeds up, and arrives at `end` levels per second, so the last
+#           levels go by in about a frame each and every LED goes dark at the same moment
+# For the highlight never to slow, drying takes about half the time after the hold: it has to
+# bring the highlight down to dried no faster than fading starts.
 # On the panel the splat runs at 0.7 of the page's brightness, in pure red: any green or
 # blue rounds to level 1 on the LEDs and reads pink in a dim room.
 BLOOD = {"colour": (240, 0, 0),           # display units, at the highlight's peak
          "level": 0.7,
-         "dried": 0.685,                  # the body, fresh and dried, as a share of the highlight (perceived)
-         "highlight": (0.25, 0.4),        # highlight centre (towards the light) and width, in splat radii
+         "dried": 0.685,                  # the dried splat, as a share of the highlight's peak (perceived)
+         "body": 0.15,                    # fresh body above the dried level, as a share of the highlight's rise
+         "highlight": (0.25, 0.7),        # highlight centre (towards the light) and width, in splat radii
          "land": 0.18, "wet": 0.45,
-         "after": 2.7,                    # seconds from the end of the hold to black
-         "toe": 0.15}                     # share of the highlight's drive the curve's offset takes off
+         "speed": 0.22,                   # drying: the highlight's fall, in shares of its peak per second
+         "fade": 1.3,                     # seconds from dried to black
+         "end": 40.0}                     # drive levels per second at the very end (at the highlight's scale)
 BLOOD_IMPACT = 8.0                         # mm
 BLOOD_SAMPLES = 3                          # coverage samples per LED cell, each way
+BLOOD_PEAK = 255.0 * (BLOOD["level"] * BLOOD["colour"][0] / 255.0) ** GAMMA   # the highlight's drive
+BLOOD_DRIED_DRIVE = BLOOD_PEAK * BLOOD["dried"] ** GAMMA
+BLOOD_DRIED_AT = BLOOD["wet"] + (1 - BLOOD["dried"]) / BLOOD["speed"]
+BLOOD_END = BLOOD_DRIED_AT + BLOOD["fade"]
 
 
-def blood_highlight(x):
-    """The highlight's perceived brightness (1 = fresh) at x = 0..1 of the way from the end
-    of the hold to black: linear in perceived brightness, then onto the toe, so its speed
-    never drops and it ends on a straight line in drive."""
-    toe = BLOOD["toe"]
-    p = 1 - (1 - toe ** (1 / GAMMA)) * min(max(x, 0.0), 1.0)
-    return max(0.0, (p ** GAMMA - toe) / (1 - toe)) ** (1 / GAMMA)
-
-
-def _dried_at():
-    lo, hi = 0.0, 1.0
-    for _ in range(40):
-        mid = (lo + hi) / 2
-        lo, hi = (mid, hi) if blood_highlight(mid) > BLOOD["dried"] else (lo, mid)
-    return lo
-
-
-BLOOD_DRIED_X = _dried_at()
-BLOOD_DRIED_AT = BLOOD["wet"] + BLOOD["after"] * BLOOD_DRIED_X
+def blood_fade_drive(tau):
+    """Drive of the dried splat tau s into fading (full coverage): a cubic from the dried
+    drive to 0 that leaves at the highlight's drying speed (so the highlight's perceived speed
+    carries straight across) and arrives at BLOOD["end"] levels per second (so the last
+    levels go by in about a frame each). Its perceived speed only ever increases."""
+    u = clamp(tau / BLOOD["fade"], 0.0, 1.0)
+    s0 = BLOOD["speed"] * GAMMA * BLOOD_PEAK * BLOOD["dried"] ** (GAMMA - 1)   # drive/s leaving dried
+    f = BLOOD["fade"]
+    return max(0.0, (2 * u ** 3 - 3 * u ** 2 + 1) * BLOOD_DRIED_DRIVE
+               - (u ** 3 - 2 * u ** 2 + u) * f * s0 - (u ** 3 - u ** 2) * f * BLOOD["end"])
 
 # ---- shapes: pumpkins and the soccer ball --------------------------------------------
 # Pixel art on the panel's own 16x16 grid, so at full size every LED is cleanly lit or
@@ -266,13 +261,6 @@ def to_drive(v):
     return 255.0 * clamp(v / 255.0, 0.0, 1.0) ** GAMMA
 
 
-def blood_levels(t):
-    """(highlight, body) perceived brightness of a splat t s after landing, as shares of the
-    fresh highlight: the highlight on its curve; the body still until dried, then the same."""
-    h = blood_highlight((t - BLOOD["wet"]) / BLOOD["after"])
-    return h, min(BLOOD["dried"], h)
-
-
 def mulberry32(a):
     """Seeded uniform 0..1: a splat keeps its shape."""
     def rand():
@@ -347,7 +335,10 @@ class Splat:
         hl = [math.exp(-((math.hypot((i - CENTRE) * PITCH - hx, (CENTRE - j) * PITCH - hy) / w) ** 2))
               for i, j, _dist, _rainbow in LEDS]
         top = max(h for h, c in zip(hl, self.cover) if c > 0.5)
-        self.shine = [min(1.0, h / top) for h in hl]     # 0 = body, 1 = the highlight's peak
+        # fresh brightness of each LED, perceived, as a share of the highlight's peak
+        rise = 1 - BLOOD["dried"]
+        self.fresh = [BLOOD["dried"] + rise * (BLOOD["body"] + (1 - BLOOD["body"]) * min(1.0, h / top))
+                      for h in hl]
 
     def inside(self, dx, dy):
         r, th = math.hypot(dx, dy), math.atan2(dy, dx)
@@ -373,7 +364,7 @@ class Drop:
         # Seeded from the drop itself, not the run's random numbers, so drop timing is unchanged.
         seed = (struct.unpack("<I", struct.pack("<f", energy))[0] * 2654435761) & 0xFFFFFFFF
         self.splat = Splat(seed, energy, self.hot) if scheme == "bloody" else None
-        self.life = BLOOD["wet"] + BLOOD["after"] if self.splat else LIFE
+        self.life = BLOOD_END if self.splat else LIFE
         # Shapes stop at 1x: above that colours clip (the orange would turn yellow).
         self.amp = min(1.0 if self.shape else 1.6, energy / FULL)
         self.stripe = stripe
@@ -502,8 +493,14 @@ class Ripples:
         sp = d.splat
         ease = 1 - (1 - max(0.0, t) / BLOOD["land"]) ** 3 if t < BLOOD["land"] else 1.0
         rho = BLOOD_IMPACT + (sp.reach - BLOOD_IMPACT) * ease
-        hi, body = blood_levels(t)
-        peak = [BLOOD["level"] * c for c in BLOOD["colour"]]
+        if t < BLOOD_DRIED_AT:
+            # fresh, then drying: the highlight falls at a steady speed to the dried level and
+            # every LED comes down with it in proportion to its height above dried
+            hi = 1 - BLOOD["speed"] * max(0.0, t - BLOOD["wet"])
+            k = (hi - BLOOD["dried"]) / (1 - BLOOD["dried"])
+            drive = [BLOOD_PEAK * (BLOOD["dried"] + (f - BLOOD["dried"]) * k) ** GAMMA for f in sp.fresh]
+        else:
+            drive = [blood_fade_drive(t - BLOOD_DRIED_AT)] * (N * N)   # the dried splat, evenly
         for n, (i, j, dist, _rainbow) in enumerate(LEDS):
             a = sp.cover[n]
             if ease < 1:
@@ -511,10 +508,10 @@ class Ripples:
                 a = max(a, clamp(1 - (dist - BLOOD_IMPACT) / PITCH, 0.0, 1.0) * (1 - ease))
             if a <= 0:
                 continue
-            b = body + (hi - body) * sp.shine[n]          # this LED's perceived share
             p = px[j][i]
-            for k in range(3):
-                p[k] = to_drive(peak[k] * b) * a + p[k] * (1 - a)
+            p[0] = drive[n] * a + p[0] * (1 - a)          # pure red
+            p[1] *= 1 - a
+            p[2] *= 1 - a
 
     def _shape(self, px, d, t, now, dt):
         """Add a growing shape in drive levels: each LED shows the average of the art under it."""
