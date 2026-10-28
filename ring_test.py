@@ -67,14 +67,18 @@ import time
 N = 16                       # 16 x 16 LEDs
 CENTRE = (N - 1) / 2         # 7.5: ripples land between the 4 middle LEDs
 PITCH = 10.0                 # mm between LEDs
-FPS = 60                     # default frames per second, as the Muon Ripple board (--fps)
+FPS = 120                    # default frames per second (--fps): fast enough to blend the faintest levels
 PANEL_MAX_FPS = 125          # 256 LEDs x 24 bits at 800 kbit/s is 7.7 ms, plus the 0.3 ms latch
 GAMMA = 2.2                  # display units -> LED drive levels (linear light)
-# Ordered (Bayer) rounding: each LED rounds its drive level at its own fixed threshold, so in
-# a slow fade neighbouring LEDs step to the next level at different moments and the cover,
-# which blends a few LEDs, shows the fade in much finer steps. Each LED still only steps one
-# way (nothing flickers); whole levels, like the shapes' pixel art, come out unchanged.
-BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
+# An LED's faint levels are coarse, and it can't go below level 1, which still shows through
+# the cover in a dim room. So under FINE_BELOW each LED alternates between the two levels
+# either side of what it should show, in the right proportion (carrying the remainder from
+# frame to frame), and goes below level 1 the same way, by showing level 1 for a shrinking
+# share of frames; at the frame rate the eye and the cover blend that into a steady glow that
+# fades out smoothly. Each LED runs its pattern at its own phase, so neighbours never flash
+# in step. Under MIN_SHARE of level 1 it's off. Whole levels come out unchanged.
+FINE_BELOW = 32.0
+MIN_SHARE = 0.04
 
 # ---- power model (WS2812B, conservative) ------------------------------------
 MA_PER_CHANNEL = 20.0        # mA per colour channel at 255 (~60 mA per LED at full white)
@@ -112,16 +116,13 @@ GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "
 #              the north-west would catch on the wet surface
 # It lands as the ripple's impact circle and spreads to the full splatter on an ease-out
 # (0.18 s), holds until 0.45 s, then the whole splat fades out together, by 3.05 s, on one
-# smooth curve: a slight ease-in from the hold, then a gentle arc to black. The curve is
-# the perceived brightness 1 - c*y^1.3, taken into drive levels less a 3 % offset ("toe")
-# so it lands on black cleanly. The body's drive comes down nearly evenly; with only 31
-# levels to use, its last few each hold for 0.1-0.17 s.
+# smooth curve that eases out of the hold and eases into black (a smoothstep on perceived
+# brightness). Its faintest stretch is shown below the LEDs' bottom level (see FINE_BELOW).
 # On the panel the splat is pure red: any green or blue rounds to level 1 on the LEDs and
 # reads pink in a dim room.
 BLOOD = {"highlight": 102.0, "body": 31.0,   # drive levels, before projection
          "spot": (0.25, 0.3),             # highlight disc: centre towards the light, radius; in splat radii
-         "land": 0.18, "wet": 0.45, "fade": 2.6,
-         "ease": 1.3, "toe": 0.03}        # fade curve shape (see above)
+         "land": 0.18, "wet": 0.45, "fade": 2.6}
 BLOOD_IMPACT = 8.0                         # mm
 BLOOD_SAMPLES = 3                          # coverage samples per LED cell, each way, for the splat
 SPOT_SAMPLES = 6                           # ... and for the highlight disc
@@ -131,9 +132,8 @@ BLOOD_END = BLOOD["wet"] + BLOOD["fade"]
 def blood_fade(t):
     """Drive multiplier for the whole splat t s after landing: 1 while fresh, then to 0."""
     y = clamp((t - BLOOD["wet"]) / BLOOD["fade"], 0.0, 1.0)
-    toe = BLOOD["toe"]
-    q = 1 - (1 - toe ** (1 / GAMMA)) * y ** BLOOD["ease"]       # perceived
-    return max(0.0, (q ** GAMMA - toe) / (1 - toe))
+    q = 1 - y * y * (3 - 2 * y)                                  # perceived: smoothstep down
+    return q ** GAMMA
 
 
 # ---- shapes: pumpkins and the soccer ball --------------------------------------------
@@ -554,15 +554,28 @@ def power_scale(frame, level, max_amps):
     return max(0.0, (max_amps - idle) / (amps - idle))
 
 
-def encode(frame, level, layout, dither=True):
-    """Frame -> GRB byte buffer in data-chain order, each LED rounding at its Bayer threshold
-    (or to the nearest level, without dither)."""
+def encode(frame, level, layout, carry=None):
+    """Frame -> GRB byte buffer in data-chain order. With `carry` (N*N*3 floats kept between
+    frames), levels under FINE_BELOW are shown as the right share of frames at the two levels
+    either side (see FINE_BELOW); without it, every level rounds to the nearest."""
     buf = bytearray(N * N * 3)
     for y in range(N):
         for x in range(N):
             i = 3 * xy_to_index(x, y, layout)
-            th = (BAYER[y % 4][x % 4] + 0.5) / 16 if dither else 0.5
-            r, g, b = (min(255, int(min(255.0, c) * level + th)) for c in frame[y][x])
+            rgb = []
+            for k, c in enumerate(frame[y][x]):
+                v = min(255.0, c) * level
+                if carry is None or v >= FINE_BELOW:
+                    rgb.append(min(255, int(v + 0.5)))
+                    continue
+                if v < MIN_SHARE:
+                    rgb.append(0)
+                    continue
+                acc = carry[i + k] + v
+                q = int(acc)
+                carry[i + k] = acc - q
+                rgb.append(q)
+            r, g, b = rgb
             buf[i], buf[i + 1], buf[i + 2] = g, r, b
     return buf
 
@@ -571,8 +584,9 @@ def encode(frame, level, layout, dither=True):
 class Panel:
     """The real panel on a Pi 5 GPIO pin, via Adafruit's PIO driver."""
 
-    def __init__(self, gpio, dither=True):
-        self.dither = dither
+    def __init__(self, gpio, fine=True):
+        # each LED's pattern starts at its own phase, so the panel never pulses in step
+        self.carry = [((n * 0.618034) % 1.0) for n in range(N * N * 3)] if fine else None
         try:
             from adafruit_raspberry_pi5_neopixel_write import neopixel_write
         except ImportError:
@@ -582,7 +596,7 @@ class Panel:
         self.id = gpio           # the driver reads the BCM GPIO number from .id
 
     def show(self, frame, level, layout):
-        self._write(self, encode(frame, level, layout, self.dither))
+        self._write(self, encode(frame, level, layout, self.carry))
 
     def off(self):
         self._write(self, bytearray(N * N * 3))
@@ -678,7 +692,7 @@ def main():
                    help="data-chain wiring of the matrix (default serpentine, as on Adafruit's 16x16)")
     p.add_argument("--seed", type=int, default=None, help="random seed, to repeat the same run of drops")
     p.add_argument("--no-dither", action="store_true",
-                   help="round every LED to the nearest level, to compare (slow fades then step together)")
+                   help="round every LED to the nearest level instead of blending its faintest levels over frames")
     p.add_argument("--preview", action="store_true", help="draw in the terminal instead of driving the panel")
     args = p.parse_args()
 
@@ -694,7 +708,7 @@ def main():
         p.error(f"--max-amps must be above the panel's idle draw ({N * N * MA_IDLE_PER_LED / 1000.0:.2f} A)")
 
     rng = random.Random(args.seed)
-    out = TerminalPreview() if args.preview else Panel(args.pin, dither=not args.no_dither)
+    out = TerminalPreview() if args.preview else Panel(args.pin, fine=not args.no_dither)
     field = Ripples(rng, args.brightness, args.max_amps)
     keys = Keys() if args.listen else None
     if args.fps > PANEL_MAX_FPS:
