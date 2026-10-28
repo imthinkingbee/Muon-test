@@ -406,14 +406,14 @@ class Ripples:
                     g = d.amp * fade * (ring + (GLITTER["wake"] if dist < r0 else 0)) * edge
                     if g > 0.05 and self.rng.random() < GLITTER["rate"] * (1.5 if d.hot else 1) * g * dt:
                         c = tuple((1 - GLITTER["tint"]) * 245 + GLITTER["tint"] * ch for ch in col)
-                        self.sparkles.append([n, now, c, 0.6 + 0.4 * self.rng.random()])
+                        self.sparkles.append([n, now, c, 0.6 + 0.4 * self.rng.random(), True])
         self.sparkles = [s for s in self.sparkles if now - s[1] <= GLITTER["life"]]
-        for n, t0, c, strength in self.sparkles:
+        for n, t0, c, strength, gamma in self.sparkles:
             t = now - t0
             env = (t / GLITTER["rise"] if t < GLITTER["rise"]
                    else math.exp(-(t - GLITTER["rise"]) / GLITTER["tau"])) * strength
             i, j = LEDS[n][0], LEDS[n][1]
-            p = disp[j][i]
+            p = (disp if gamma else drive)[j][i]   # ripple glitter through the gamma; pumpkin glitter not
             for k in range(3):
                 p[k] += env * GLITTER["peak"] / 255 * c[k]
         for j in range(N):
@@ -476,7 +476,8 @@ class Ripples:
                         self.rng.random() < SHAPE_GLITTER * (1.5 if d.hot else 1) * d.amp * level * f * dt):
                     c = tuple((1 - GLITTER["tint"]) * 245 + GLITTER["tint"] * ch for ch in col)
                     # Dimmed with the pumpkin's power fit, so they stay in proportion to its body.
-                    self.sparkles.append([n, now, c, (0.6 + 0.4 * self.rng.random()) * d.fit])
+                    # drawn straight in drive levels, like the pumpkin itself: no gamma
+                    self.sparkles.append([n, now, c, (0.6 + 0.4 * self.rng.random()) * d.fit, False])
 
 
 def xy_to_index(x, y, layout):
