@@ -50,14 +50,19 @@ seeded from the drop so each one is its own shape.
 - It lands as the ripple's 8 mm impact circle and spreads to the full splatter in 0.18 s,
   fast at first and then settling.
 - It stays fresh red for 0.45 s, then dries through dark red to black in one smooth curve
-  with no hold, 3.75 s in all.
+  with no hold, gone about 2.95 s after landing.
+- The LEDs' bottom few levels are far apart, and in a dim room even level 1 of 255 shows, so
+  a fade that eases into black visibly stair-steps through them. Instead, once an LED gets
+  down to level 6 it goes to black in 0.15 s, evenly, so no level holds for more than a
+  frame or two.
 - Its colours run at 0.7 of the page's: a solid splat reads much brighter than a thin ring.
 - While it's wet, for about its first 0.85 s, it catches the light. `--sheen` picks how:
   - `glow` (default): its centre goes part way to a hotter red.
   - `spec`: a specular glint. The LED where a light up and to the north-west would catch
-    the splat, about a third of its radius from the impact, goes most of the way to white,
-    and the cover blends it into a highlight on the red. If the glint falls between two
-    LEDs it's shared between them.
+    the splat, about a third of its radius from the impact, goes white from the moment it
+    lands while the splat is wet (0.45 s), then goes off in 0.12 s: a slow fade would pass
+    through pink. The cover blends it into a highlight on the red. If the glint falls
+    between two LEDs it's shared between them.
   - `none`: no sheen.
 - Newer splats land on top of older ones, covering them where they overlap.
 - Rare drops (over 15.5 MeV) splat bigger.

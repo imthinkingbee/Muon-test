@@ -26,10 +26,11 @@ The colour scheme changes on every drop, warm -> cool -> pride -> warm ...
 --scheme bloody swaps the ripples for Muon Ripple's blood: each drop splats where it
 lands (a seeded, lumpy splat with spikes and droplets), spreading from the ripple's
 8 mm impact circle in 0.18 s, then dries from fresh red through dark red to black with
-no hold, 3.75 s in all, at 0.7 of the page's colours. Newer splats land on top of older
+no hold, gone about 2.95 s after landing, at 0.7 of the page's colours. Each LED's last few
+levels go by in 0.15 s, so the end of the fade doesn't stair-step. Newer splats land on top of older
 ones. Rare drops splat bigger. --sheen picks how the wet splat catches the light: none,
-glow (its centre goes a hotter red) or spec (one or two LEDs go white, and the cover
-blends them into a highlight).
+glow (its centre goes a hotter red) or spec (one or two LEDs go white while it's wet, and
+the cover blends them into a highlight).
 
 Colours, fades and glitter are worked out in display units and turned into LED drive
 levels with a 2.2 gamma, as the Muon Ripple board does, so a ring dims the way it looks
@@ -102,9 +103,15 @@ GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "
 # spreads to the full splatter on an ease-out, then one continuous curve takes it from
 # fresh through dried to black, with no hold. On the panel, behind the cover, the page's
 # colours read too bright, so the splat runs at 0.7 of them.
+# The LEDs' bottom levels are far apart (1 of 255 still shows in a dim room), so a fade
+# that eases into black holds on levels 3, 2, 1 for a tenth of a second each, a visible
+# staircase. Instead, once an LED falls below level 6 it goes to black in 0.15 s, evenly in
+# drive levels; drying is stretched so the splat still ends about 2.95 s after landing.
 BLOOD = {"fresh": (240, 16, 22), "dried": (100, 14, 10),
          "level": 0.7,                    # scales the colours: a solid splat reads brighter than a ring
-         "land": 0.18, "wet": 0.45, "dry": 3.3}
+         "land": 0.18, "wet": 0.45, "dry": 3.9,
+         "cut": 6.0,                      # drive level where an LED starts its quick finish ...
+         "finish": 0.15}                  # ... and the seconds it takes to reach black
 BLOOD_IMPACT = 8.0                         # mm
 BLOOD_SAMPLES = 3                          # coverage samples per LED cell, each way
 # quadratic Bezier fresh -> black whose midpoint is the dried colour
@@ -118,7 +125,7 @@ GLOW = {"colour": (255, 40, 12), "amount": 0.6}
 SPEC = {"offset": 0.35,                    # glint this far from the impact, in splat radii ...
         "dir": (-math.sqrt(0.5), math.sqrt(0.5)),   # ... towards the light (north-west)
         "white": (255, 245, 235),          # display units: a slightly warm white
-        "amount": 0.8,                     # how far the brightest glint LED goes to white
+        "off": 0.12,                       # s: white while wet, then off this fast (a slow fade reads pink)
         "min": 0.15}                       # a second LED glints only above this share of the first
 
 # ---- shapes: pumpkins and the soccer ball --------------------------------------------
@@ -353,6 +360,7 @@ class Drop:
         seed = (struct.unpack("<I", struct.pack("<f", energy))[0] * 2654435761) & 0xFFFFFFFF
         self.splat = Splat(seed, energy, self.hot) if scheme == "bloody" else None
         self.life = BLOOD["wet"] + BLOOD["dry"] if self.splat else LIFE
+        self.finish_from = [None] * (N * N) if self.splat else None   # when each LED began its finish
         self.glints = spec_glints(0.0, 0.0, self.splat.r0) if self.splat else {}
         # Shapes stop at 1x: above that colours clip (the orange would turn yellow).
         self.amp = min(1.0 if self.shape else 1.6, energy / FULL)
@@ -467,7 +475,10 @@ class Ripples:
         sp = d.splat
         ease = 1 - (1 - max(0.0, t) / BLOOD["land"]) ** 3 if t < BLOOD["land"] else 1.0
         rho = BLOOD_IMPACT + (sp.reach - BLOOD_IMPACT) * ease
-        shine = 0.0 if self.sheen == "none" else 1 - smooth(clamp(t / (BLOOD["wet"] + 0.4), 0.0, 1.0))
+        shine = 0.0 if self.sheen != "glow" else 1 - smooth(clamp(t / (BLOOD["wet"] + 0.4), 0.0, 1.0))
+        glint = 0.0
+        if self.sheen == "spec":
+            glint = 1.0 if t < BLOOD["wet"] else clamp(1 - (t - BLOOD["wet"]) / SPEC["off"], 0.0, 1.0)
         col = blood_colour(t)
         glow = tuple(BLOOD["level"] * g for g in GLOW["colour"])
         for n, (i, j, dist, _rainbow) in enumerate(LEDS):
@@ -478,12 +489,19 @@ class Ripples:
             if a <= 0:
                 continue
             c = col
-            if shine > 0 and self.sheen == "glow":
+            if t > BLOOD["wet"]:                   # drying: the quick finish near black
+                start = d.finish_from[n]
+                if start is None and to_drive(col[0] * a) < BLOOD["cut"]:
+                    start = d.finish_from[n] = t
+                if start is not None:
+                    f = clamp(1 - (t - start) / BLOOD["finish"], 0.0, 1.0) ** (1 / GAMMA)   # even in drive
+                    c = tuple(v * f for v in c)
+            if shine > 0:
                 w = GLOW["amount"] * shine * math.exp(-((dist / (0.45 * sp.r0)) ** 2))
-                c = tuple(v + (g - v) * w for v, g in zip(col, glow))
-            elif shine > 0 and n in d.glints:
-                w = SPEC["amount"] * shine * d.glints[n] * sp.cover[n]
-                c = tuple(v + (g - v) * w for v, g in zip(col, SPEC["white"]))
+                c = tuple(v + (g - v) * w for v, g in zip(c, glow))
+            elif glint > 0 and n in d.glints:
+                w = glint * d.glints[n] * sp.cover[n]
+                c = tuple(v + (g - v) * w for v, g in zip(c, SPEC["white"]))
             p = px[j][i]
             for k in range(3):
                 p[k] = c[k] * a + p[k] * (1 - a)
