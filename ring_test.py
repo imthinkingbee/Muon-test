@@ -26,10 +26,9 @@ The colour scheme changes on every drop, warm -> cool -> pride -> warm ...
 --scheme bloody swaps the ripples for Muon Ripple's blood: each drop splats where it
 lands (a seeded, lumpy splat with spikes and droplets), spreading from the ripple's
 8 mm impact circle in 0.18 s. It's drawn in two colours, a body at drive 31 and a small
-highlight at drive 102, and projected onto the grid by area. It holds fresh until
-0.45 s, dries until 1.45 s (the highlight's colour comes down to the body's), and fades
-from dried to black by 3.05 s, smoothly throughout. Pure red. Newer splats land on top
-of older ones; rare drops splat bigger.
+highlight at drive 102, and projected onto the grid by area. It holds until 0.45 s, then
+fades out as a whole on one smooth curve, gone by 3.05 s. Pure red. Newer splats land on
+top of older ones; rare drops splat bigger.
 
 Colours, fades and glitter are worked out in display units and turned into LED drive
 levels with a 2.2 gamma, as the Muon Ripple board does, so a ring dims the way it looks
@@ -37,8 +36,7 @@ on the simulation page instead of lingering at the bottom of the LEDs' range.
 
 --listen drops nothing on its own: each press of the space bar drops one muon (r drops a
 rare one), so a single splat or ripple can be watched on its own. Not in --help: t drops a
-blood splat that stops twice, as the fresh splat (landed, wet, before drying) and as the
-dried splat (before fading out); each press of t plays it on to the next stop, then out. It picks up
+blood splat that stops once it has landed; t again fades it out. It picks up
 exactly where it stopped, so a jump on a press points at the phase that has it wrong.
 
 --scheme pumpkin swaps the ripples for Halloween: each drop grows a jack-o'-lantern
@@ -107,48 +105,30 @@ GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "
 #   body       pure red at drive 31
 #   highlight  pure red at drive 102, the brightest colour: a small disc a light up and to
 #              the north-west would catch on the wet surface
-# Phases (seconds after landing):
-#   fresh   0 - 0.45     lands as the ripple's impact circle and spreads to the full
-#                        splatter on an ease-out (0.18 s), then holds
-#   drying  0.45 - 1.45  the highlight's colour comes down to the body's; the body doesn't
-#                        change. Dried: drive 31 everywhere, before projection
-#   fading  1.45 - 3.05  the dried splat fades to black
-# It's smooth from landing to gone. Drying eases in from the hold and eases into dried at a
-# small speed; fading leaves at exactly that speed (the highlight's perceived speed carries
-# straight across, and the body, still while drying, starts moving), and only ever speeds
-# up from there, to about 43 drive levels per second at the end so the last levels go by in
-# a frame or two each. A body at drive 31 leaves only 31 levels for the fade, and the bottom
-# ones must go by fast, so the fade has to start slowly; that's why drying eases into it.
+# It lands as the ripple's impact circle and spreads to the full splatter on an ease-out
+# (0.18 s), holds until 0.45 s, then the whole splat fades out together, by 3.05 s, on one
+# smooth curve: a slight ease-in from the hold, then a gentle arc to black. The curve is
+# the perceived brightness 1 - c*y^1.3, taken into drive levels less a 3 % offset ("toe")
+# so it lands on black cleanly. The body's drive comes down nearly evenly; with only 31
+# levels to use, its last few each hold for 0.1-0.17 s.
 # On the panel the splat is pure red: any green or blue rounds to level 1 on the LEDs and
 # reads pink in a dim room.
 BLOOD = {"highlight": 102.0, "body": 31.0,   # drive levels, before projection
          "spot": (0.25, 0.3),             # highlight disc: centre towards the light, radius; in splat radii
-         "land": 0.18, "wet": 0.45, "dry": 1.0, "fade": 1.6,
-         "fade_shape": (0.4, 3.0)}        # fade multiplier 1 - a*y - (1-a)*y^k over y = 0..1
+         "land": 0.18, "wet": 0.45, "fade": 2.6,
+         "ease": 1.3, "toe": 0.03}        # fade curve shape (see above)
 BLOOD_IMPACT = 8.0                         # mm
 BLOOD_SAMPLES = 3                          # coverage samples per LED cell, each way, for the splat
 SPOT_SAMPLES = 6                           # ... and for the highlight disc
-BLOOD_DRIED_AT = BLOOD["wet"] + BLOOD["dry"]
-BLOOD_END = BLOOD_DRIED_AT + BLOOD["fade"]
+BLOOD_END = BLOOD["wet"] + BLOOD["fade"]
 
 
-def blood_drives(t):
-    """(highlight, body) drive levels, before projection, t s after landing."""
-    hi, body = BLOOD["highlight"], BLOOD["body"]
-    if t <= BLOOD["wet"]:
-        return hi, body
-    a, k = BLOOD["fade_shape"]
-    if t <= BLOOD_DRIED_AT:
-        # The highlight's perceived brightness, as a share of its own, on a cubic from 1 down to
-        # the body's: leaving the hold at zero speed, arriving at the speed the fade leaves at.
-        d = (body / hi) ** (1 / GAMMA)
-        v_end = body * a / BLOOD["fade"] / (hi * GAMMA * d ** (GAMMA - 1))   # per second, perceived share
-        u, T = (t - BLOOD["wet"]) / BLOOD["dry"], BLOOD["dry"]
-        h = (2 * u ** 3 - 3 * u ** 2 + 1) + (-2 * u ** 3 + 3 * u ** 2) * d - (u ** 3 - u ** 2) * T * v_end
-        return hi * h ** GAMMA, body
-    y = clamp((t - BLOOD_DRIED_AT) / BLOOD["fade"], 0.0, 1.0)
-    m = max(0.0, 1 - a * y - (1 - a) * y ** k)
-    return body * m, body * m
+def blood_fade(t):
+    """Drive multiplier for the whole splat t s after landing: 1 while fresh, then to 0."""
+    y = clamp((t - BLOOD["wet"]) / BLOOD["fade"], 0.0, 1.0)
+    toe = BLOOD["toe"]
+    q = 1 - (1 - toe ** (1 / GAMMA)) * y ** BLOOD["ease"]       # perceived
+    return max(0.0, (q ** GAMMA - toe) / (1 - toe))
 
 
 # ---- shapes: pumpkins and the soccer ball --------------------------------------------
@@ -493,13 +473,12 @@ class Ripples:
 
     def _splat(self, px, d, t):
         """Lay a blood splat over the frame, in drive levels: it spreads out from the solid
-        impact circle on an ease-out, holds fresh, then its highlight flattens to the body
-        (dried) and the dried splat fades to black. Coverage is a share of the cell's area,
-        so it scales the light (drive), not the display value."""
+        impact circle on an ease-out, holds fresh, then fades out as a whole. Coverage is a
+        share of the cell's area, so it scales the light (drive), not the display value."""
         sp = d.splat
         ease = 1 - (1 - max(0.0, t) / BLOOD["land"]) ** 3 if t < BLOOD["land"] else 1.0
         rho = BLOOD_IMPACT + (sp.reach - BLOOD_IMPACT) * ease
-        hi, body = blood_drives(t)
+        hi, body, m = BLOOD["highlight"], BLOOD["body"], blood_fade(t)
         for n, (i, j, dist, _rainbow) in enumerate(LEDS):
             a = sp.cover[n]
             if ease < 1:
@@ -509,7 +488,7 @@ class Ripples:
                 continue
             # the cell's mix of highlight and body, by area (all body where only the impact covers it)
             share = min(1.0, sp.spot[n] / sp.cover[n]) if sp.cover[n] > 0 else 0.0
-            drive = body + (hi - body) * share
+            drive = (body + (hi - body) * share) * m
             p = px[j][i]
             p[0] = drive * a + p[0] * (1 - a)             # pure red
             p[1] *= 1 - a
@@ -674,7 +653,7 @@ def main():
     p.add_argument("--scheme", choices=["rotate"] + SCHEME_ORDER + ["bloody", "pumpkin"]
                    + [f"pumpkin-{s}" for s in SCHEME_ORDER] + ["soccer"], default="rotate",
                    help="rotate = warm, cool, pride in turn (default); warm, cool or pride = only that "
-                        "scheme's ripples; bloody = splats that dry to black; "
+                        "scheme's ripples; bloody = blood splats that fade to black; "
                         "pumpkin = orange jack-o'-lanterns; pumpkin-warm, "
                         "pumpkin-cool, pumpkin-pride = jack-o'-lanterns in that scheme's colours; "
                         "soccer = soccer balls")
@@ -754,18 +733,16 @@ def main():
                     elif k in "rR":
                         drop_one(now, rare_energy(rng))
                     elif k in "tT":
-                        # Step a blood splat: held once landed, again once dried, then out.
+                        # Step a blood splat: held once landed, then out.
                         if stepped is not None and stepped.stops:
                             if stepped.held(now):
                                 stepped.release(now)
-                                log("  t: " + ("drying; t again to fade out" if len(stepped.stops) == 1
-                                               else "fading out"), out)
+                                log("  t: fading out", out)
                             else:
-                                log("  t: still playing to the next stop", out)
+                                log("  t: still landing", out)
                         else:
-                            stepped = drop_one(now, muon_energy(rng), "bloody",
-                                               (BLOOD["wet"], BLOOD_DRIED_AT))
-                            log("  t: landed; t again to dry", out)
+                            stepped = drop_one(now, muon_energy(rng), "bloody", (BLOOD["wet"],))
+                            log("  t: landed; t again to fade out", out)
             elif now >= next_drop:
                 drop_one(now, muon_energy(rng))
                 next_drop = now + rng.expovariate(args.rate)

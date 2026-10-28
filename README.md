@@ -54,14 +54,10 @@ seeded from the drop so each one is its own shape.
   panel between the two is that blending, or the splat's partial coverage of a cell.
 - **Fresh:** it lands as the ripple's 8 mm impact circle and spreads to the full splatter
   in 0.18 s, fast at first and then settling, then holds until 0.45 s.
-- **Drying (0.45–1.45 s):** the highlight's colour comes down to the body's; the body
-  doesn't change. Dried, the splat is drive 31 everywhere before projection.
-- **Fading (1.45–3.05 s):** the dried splat fades to black.
-- It's smooth from landing to gone. Drying eases in from the hold and eases into the dried
-  state; fading leaves at exactly the highlight's speed there, and only ever speeds up, to
-  about 43 drive levels per second at the end, so the last levels go by in a frame or two
-  each. With the body at drive 31 there are only 31 levels to fade through, and the bottom
-  ones have to go by fast, so the fade starts slowly; that's why drying eases into it.
+- **Fading (0.45–3.05 s):** the whole splat fades out together on one smooth curve: a
+  slight ease-in from the hold, then a gentle arc to black. The body has only 31 drive
+  levels to come down through, so its last few each hold for 0.1–0.17 s (in a dim room
+  even level 1 of 255 shows); a faster finish would hide that, at the cost of a cliff.
 - It's pure red: the page's colours carry a touch of green and blue, which on the LEDs
   rounds to level 1 of 255 and shows in a dim room as a pink tint.
 - Newer splats land on top of older ones, covering them where they overlap.
@@ -240,7 +236,7 @@ drop    3 | pride         | rare    |  17.2 MeV | brightness x1.60
 
 | Option | Default | What it does |
 |---|---|---|
-| `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn. `warm`, `cool` or `pride` = only that scheme's ripples. `bloody` = splats that dry to black. `pumpkin` = orange jack-o'-lanterns. `pumpkin-warm`, `pumpkin-cool`, `pumpkin-pride` = jack-o'-lanterns in that scheme's colours. `soccer` = soccer balls. |
+| `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn. `warm`, `cool` or `pride` = only that scheme's ripples. `bloody` = blood splats that fade to black. `pumpkin` = orange jack-o'-lanterns. `pumpkin-warm`, `pumpkin-cool`, `pumpkin-pride` = jack-o'-lanterns in that scheme's colours. `soccer` = soccer balls. |
 | `--rate R` | `0.4` | average drops per second, at random times. `1.7` = sea level. |
 | `--brightness B` | `1.0` | overall brightness from 0 to 1 (e.g. `0.25`) |
 | `--listen` | off | drop nothing on its own: each press of the space bar drops a muon, `r` drops a rare one. For watching one drop at a time. |
@@ -257,7 +253,7 @@ Examples:
 ```bash
 python3 ring_test.py --rate 1.7             # real sea-level muon rate
 python3 ring_test.py --scheme cool          # only cool ripples (also: warm, pride)
-python3 ring_test.py --scheme bloody        # splats that dry to black
+python3 ring_test.py --scheme bloody        # blood splats that fade to black
 python3 ring_test.py --scheme bloody --listen   # one splat per space bar press
 python3 ring_test.py --scheme pumpkin       # jack-o'-lanterns 🎃
 python3 ring_test.py --scheme pumpkin-pride # rainbow jack-o'-lanterns, with sparkles
