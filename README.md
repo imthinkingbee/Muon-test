@@ -48,29 +48,24 @@ lumpy blob with tapering spikes, droplets at some spike tips and a few stray sat
 seeded from the drop so each one is its own shape.
 
 - **Fresh:** it lands as the ripple's 8 mm impact circle and spreads to the full splatter
-  in 0.18 s, fast at first and then settling, then holds, fresh and wet, until 0.45 s.
-- **Drying:** over the next 0.9 s it turns from fresh red to dried red, a darker red that
-  still reads as a solid splat, and loses its sheen.
-- **Fading:** over the last 1.8 s the dried splat fades to black, slowly at first. It's gone
-  3.15 s after landing.
+  in 0.18 s, fast at first and then settling, then holds, fresh and wet, until 0.45 s. The
+  body sits at the dried level so its shape reads; a soft highlight, where a light up and
+  to the north-west would catch the wet surface, rises to full brightness.
+- **Drying:** the highlight flattens down to the body's level by 1.65 s. The body and the
+  outline don't change. The end state is the dried splat: the same shape, evenly lit.
+- **Fading:** the dried splat fades to black by 3.15 s.
+- The highlight follows one curve through drying and fading, so its speed carries straight
+  across the line between them, and the curve only ever speeds up: the body, still while
+  drying, picks up the same speed when fading starts, and nothing fades slower there. That
+  is also why drying takes a bit under half the time after the hold rather than a third: it
+  has to bring the highlight down to the body at no more than the speed fading starts at.
+- The curve is set on the LEDs' actual light and ends on a straight line, so the bottom
+  levels (in a dim room even level 1 of 255 shows) go by in a frame or two each instead of
+  stair-stepping. The splat's partial coverage of an LED's cell scales its light too, so a
+  half-covered LED gives half the light, not 0.5^2.2 ≈ 22 %.
 - It runs at 0.7 of the page's brightness, since a solid splat reads much brighter than a
   thin ring, and in pure red. The page's colours carry a touch of green and blue, which on
   the LEDs rounds to level 1 of 255 and shows in a dim room as a pink tint.
-- `--sheen` is the lighting on the wet splat, held while it's fresh and gone in the first
-  part of the drying (dried blood is matte):
-  - `glow` (default): subtle; its centre goes part way to a brighter red.
-  - `spec`: highly specular. The LED where a light up and to the north-west would glint,
-    about a third of the splat's radius from the impact, goes white, and the cover blends
-    it into a highlight on the red. If the glint falls between two LEDs it's shared.
-  - `none`: no sheen.
-- The end of the fade is tuned for the LEDs, whose bottom few levels are far apart (in a dim
-  room even level 1 of 255 shows):
-  - The splat's partial coverage of an LED's cell scales its light, after the gamma. A
-    half-covered LED gives half the light, not 0.5^2.2 ≈ 22 %, so the dim edge LEDs don't
-    drop out long before the rest and the splat doesn't shrink LED by LED.
-  - The fade is one multiplier on every LED's light, less a small offset, so it reaches
-    black on a straight line instead of easing in. Each of the last few levels holds for
-    about 3 frames, and the whole splat goes dark within about 0.2 s.
 - Newer splats land on top of older ones, covering them where they overlap.
 - Rare drops (over 15.5 MeV) splat bigger.
 - Splats are mostly red, so they draw well under 1.5 A even at 1.7 drops/s.
@@ -250,7 +245,6 @@ drop    3 | pride         | rare    |  17.2 MeV | brightness x1.60
 | `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn. `warm`, `cool` or `pride` = only that scheme's ripples. `bloody` = splats that dry to black. `pumpkin` = orange jack-o'-lanterns. `pumpkin-warm`, `pumpkin-cool`, `pumpkin-pride` = jack-o'-lanterns in that scheme's colours. `soccer` = soccer balls. |
 | `--rate R` | `0.4` | average drops per second, at random times. `1.7` = sea level. |
 | `--brightness B` | `1.0` | overall brightness from 0 to 1 (e.g. `0.25`) |
-| `--sheen S` | `glow` | `bloody`: how a wet splat catches the light: `none`, `glow` or `spec` (see above) |
 | `--listen` | off | drop nothing on its own: each press of the space bar drops a muon, `r` drops a rare one. For watching one drop at a time. |
 | `--fps F` | `60` | frames per second. The panel can take about 125. |
 | `--duration S` | `0` | stop after *S* seconds (`0` = run until Ctrl+C) |
@@ -266,7 +260,7 @@ Examples:
 python3 ring_test.py --rate 1.7             # real sea-level muon rate
 python3 ring_test.py --scheme cool          # only cool ripples (also: warm, pride)
 python3 ring_test.py --scheme bloody        # splats that dry to black
-python3 ring_test.py --scheme bloody --listen --sheen spec   # one splat per space bar press
+python3 ring_test.py --scheme bloody --listen   # one splat per space bar press
 python3 ring_test.py --scheme pumpkin       # jack-o'-lanterns 🎃
 python3 ring_test.py --scheme pumpkin-pride # rainbow jack-o'-lanterns, with sparkles
 python3 ring_test.py --scheme soccer        # soccer balls ⚽
