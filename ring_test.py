@@ -25,14 +25,11 @@ The colour scheme changes on every drop, warm -> cool -> pride -> warm ...
 
 --scheme bloody swaps the ripples for Muon Ripple's blood: each drop splats where it
 lands (a seeded, lumpy splat with spikes and droplets), spreading from the ripple's
-8 mm impact circle in 0.18 s, and holds fresh and wet for 0.45 s: a soft highlight over
-the inner splat, where a light up and to the north-west would catch it, falling away to
-a body just above the dried level. Drying brings the highlight down at a steady speed to
-the dried level by about 1.9 s, the rest of the splat with it, outline unchanged: the
-dried splat, evenly lit. Fading then takes it to black by about 3.2 s, leaving at the
-highlight's drying speed and only ever speeding up, and ending fast enough in the LEDs'
-actual light that the last levels go by in a frame or two each. Pure red, at 0.7 of the
-page's brightness. Newer splats land on top of older ones; rare drops splat bigger.
+8 mm impact circle in 0.18 s. It's drawn in two colours, a body at drive 31 and a small
+highlight at drive 102, and projected onto the grid by area. It holds fresh until
+0.45 s, dries until 1.45 s (the highlight's colour comes down to the body's), and fades
+from dried to black by 3.05 s, smoothly throughout. Pure red. Newer splats land on top
+of older ones; rare drops splat bigger.
 
 Colours, fades and glitter are worked out in display units and turned into LED drive
 levels with a 2.2 gamma, as the Muon Ripple board does, so a ring dims the way it looks
@@ -104,49 +101,55 @@ FULL, HOT = 0.9 * MUON_PEAK, 1.8 * MUON_PEAK   # full brightness / rare colour f
 GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "peak": 230, "tint": 0.35}
 
 # ---- blood (Muon Ripple design) -------------------------------------------------------
-# A drop from the ceiling splats on the lid:
-#   fresh   it lands as the ripple's impact circle and spreads to the full splatter on an
-#           ease-out, then holds, wet, as long as `wet`: a soft highlight over the inner splat
-#           (a light up and to the north-west on the wet surface) at full brightness, falling
-#           away to a body just above the dried level, so the shape reads
-#   drying  the highlight falls at a steady speed to the dried level and every LED comes down
-#           with it in proportion to its height above dried: the bright inner splat flattens
-#           while the outline stays put. The end state is the dried splat, evenly lit
-#   fading  the dried splat fades to black on a cubic in drive levels (linear light) that
-#           leaves at the highlight's drying speed, so its perceived speed carries straight
-#           across, only ever speeds up, and arrives at `end` levels per second, so the last
-#           levels go by in about a frame each and every LED goes dark at the same moment
-# For the highlight never to slow, drying takes about half the time after the hold: it has to
-# bring the highlight down to dried no faster than fading starts.
-# On the panel the splat runs at 0.7 of the page's brightness, in pure red: any green or
-# blue rounds to level 1 on the LEDs and reads pink in a dim room.
-BLOOD = {"colour": (240, 0, 0),           # display units, at the highlight's peak
-         "level": 0.7,
-         "dried": 0.685,                  # the dried splat, as a share of the highlight's peak (perceived)
-         "body": 0.15,                    # fresh body above the dried level, as a share of the highlight's rise
-         "highlight": (0.25, 0.7),        # highlight centre (towards the light) and width, in splat radii
-         "land": 0.18, "wet": 0.45,
-         "speed": 0.22,                   # drying: the highlight's fall, in shares of its peak per second
-         "fade": 1.3,                     # seconds from dried to black
-         "end": 40.0}                     # drive levels per second at the very end (at the highlight's scale)
+# The splat is drawn in two colours, then projected onto the 16 x 16 grid: each LED shows
+# the area-weighted mix of what falls in its 10 mm cell, in drive levels (linear light).
+# Anything on the panel between the two colours is that blending, or spatial aliasing.
+#   body       pure red at drive 31
+#   highlight  pure red at drive 102, the brightest colour: a small disc a light up and to
+#              the north-west would catch on the wet surface
+# Phases (seconds after landing):
+#   fresh   0 - 0.45     lands as the ripple's impact circle and spreads to the full
+#                        splatter on an ease-out (0.18 s), then holds
+#   drying  0.45 - 1.45  the highlight's colour comes down to the body's; the body doesn't
+#                        change. Dried: drive 31 everywhere, before projection
+#   fading  1.45 - 3.05  the dried splat fades to black
+# It's smooth from landing to gone. Drying eases in from the hold and eases into dried at a
+# small speed; fading leaves at exactly that speed (the highlight's perceived speed carries
+# straight across, and the body, still while drying, starts moving), and only ever speeds
+# up from there, to about 43 drive levels per second at the end so the last levels go by in
+# a frame or two each. A body at drive 31 leaves only 31 levels for the fade, and the bottom
+# ones must go by fast, so the fade has to start slowly; that's why drying eases into it.
+# On the panel the splat is pure red: any green or blue rounds to level 1 on the LEDs and
+# reads pink in a dim room.
+BLOOD = {"highlight": 102.0, "body": 31.0,   # drive levels, before projection
+         "spot": (0.25, 0.3),             # highlight disc: centre towards the light, radius; in splat radii
+         "land": 0.18, "wet": 0.45, "dry": 1.0, "fade": 1.6,
+         "fade_shape": (0.4, 3.0)}        # fade multiplier 1 - a*y - (1-a)*y^k over y = 0..1
 BLOOD_IMPACT = 8.0                         # mm
-BLOOD_SAMPLES = 3                          # coverage samples per LED cell, each way
-BLOOD_PEAK = 255.0 * (BLOOD["level"] * BLOOD["colour"][0] / 255.0) ** GAMMA   # the highlight's drive
-BLOOD_DRIED_DRIVE = BLOOD_PEAK * BLOOD["dried"] ** GAMMA
-BLOOD_DRIED_AT = BLOOD["wet"] + (1 - BLOOD["dried"]) / BLOOD["speed"]
+BLOOD_SAMPLES = 3                          # coverage samples per LED cell, each way, for the splat
+SPOT_SAMPLES = 6                           # ... and for the highlight disc
+BLOOD_DRIED_AT = BLOOD["wet"] + BLOOD["dry"]
 BLOOD_END = BLOOD_DRIED_AT + BLOOD["fade"]
 
 
-def blood_fade_drive(tau):
-    """Drive of the dried splat tau s into fading (full coverage): a cubic from the dried
-    drive to 0 that leaves at the highlight's drying speed (so the highlight's perceived speed
-    carries straight across) and arrives at BLOOD["end"] levels per second (so the last
-    levels go by in about a frame each). Its perceived speed only ever increases."""
-    u = clamp(tau / BLOOD["fade"], 0.0, 1.0)
-    s0 = BLOOD["speed"] * GAMMA * BLOOD_PEAK * BLOOD["dried"] ** (GAMMA - 1)   # drive/s leaving dried
-    f = BLOOD["fade"]
-    return max(0.0, (2 * u ** 3 - 3 * u ** 2 + 1) * BLOOD_DRIED_DRIVE
-               - (u ** 3 - 2 * u ** 2 + u) * f * s0 - (u ** 3 - u ** 2) * f * BLOOD["end"])
+def blood_drives(t):
+    """(highlight, body) drive levels, before projection, t s after landing."""
+    hi, body = BLOOD["highlight"], BLOOD["body"]
+    if t <= BLOOD["wet"]:
+        return hi, body
+    a, k = BLOOD["fade_shape"]
+    if t <= BLOOD_DRIED_AT:
+        # The highlight's perceived brightness, as a share of its own, on a cubic from 1 down to
+        # the body's: leaving the hold at zero speed, arriving at the speed the fade leaves at.
+        d = (body / hi) ** (1 / GAMMA)
+        v_end = body * a / BLOOD["fade"] / (hi * GAMMA * d ** (GAMMA - 1))   # per second, perceived share
+        u, T = (t - BLOOD["wet"]) / BLOOD["dry"], BLOOD["dry"]
+        h = (2 * u ** 3 - 3 * u ** 2 + 1) + (-2 * u ** 3 + 3 * u ** 2) * d - (u ** 3 - u ** 2) * T * v_end
+        return hi * h ** GAMMA, body
+    y = clamp((t - BLOOD_DRIED_AT) / BLOOD["fade"], 0.0, 1.0)
+    m = max(0.0, 1 - a * y - (1 - a) * y ** k)
+    return body * m, body * m
+
 
 # ---- shapes: pumpkins and the soccer ball --------------------------------------------
 # Pixel art on the panel's own 16x16 grid, so at full size every LED is cleanly lit or
@@ -327,18 +330,21 @@ class Splat:
                     for b in range(s):
                         hit += self.inside(cx + ((a + 0.5) / s - 0.5) * PITCH, cy + ((b + 0.5) / s - 0.5) * PITCH)
             self.cover.append(hit / (s * s))
-        # How much of the highlight each LED carries: a soft Gaussian round the highlight's
-        # centre, scaled so the brightest LED the splat covers carries all of it wherever the
-        # centre falls between LEDs.
-        hx, hy = -BLOOD["highlight"][0] * r0 * math.sqrt(0.5), BLOOD["highlight"][0] * r0 * math.sqrt(0.5)
-        w = BLOOD["highlight"][1] * r0
-        hl = [math.exp(-((math.hypot((i - CENTRE) * PITCH - hx, (CENTRE - j) * PITCH - hy) / w) ** 2))
-              for i, j, _dist, _rainbow in LEDS]
-        top = max(h for h, c in zip(hl, self.cover) if c > 0.5)
-        # fresh brightness of each LED, perceived, as a share of the highlight's peak
-        rise = 1 - BLOOD["dried"]
-        self.fresh = [BLOOD["dried"] + rise * (BLOOD["body"] + (1 - BLOOD["body"]) * min(1.0, h / top))
-                      for h in hl]
+        # The highlight disc's share of each LED's cell (where the splat also is), sampled finely
+        # near the disc: before projection the splat is body or highlight, nothing between.
+        hx, hy = -BLOOD["spot"][0] * r0 * math.sqrt(0.5), BLOOD["spot"][0] * r0 * math.sqrt(0.5)
+        hr = BLOOD["spot"][1] * r0
+        q = SPOT_SAMPLES
+        self.spot = []
+        for i, j, _dist, _rainbow in LEDS:
+            cx, cy = (i - CENTRE) * PITCH, (CENTRE - j) * PITCH
+            hit = 0
+            if math.hypot(cx - hx, cy - hy) <= hr + PITCH:
+                for a in range(q):
+                    for b in range(q):
+                        x, y = cx + ((a + 0.5) / q - 0.5) * PITCH, cy + ((b + 0.5) / q - 0.5) * PITCH
+                        hit += math.hypot(x - hx, y - hy) < hr and self.inside(x, y)
+            self.spot.append(hit / (q * q))
 
     def inside(self, dx, dy):
         r, th = math.hypot(dx, dy), math.atan2(dy, dx)
@@ -493,14 +499,7 @@ class Ripples:
         sp = d.splat
         ease = 1 - (1 - max(0.0, t) / BLOOD["land"]) ** 3 if t < BLOOD["land"] else 1.0
         rho = BLOOD_IMPACT + (sp.reach - BLOOD_IMPACT) * ease
-        if t < BLOOD_DRIED_AT:
-            # fresh, then drying: the highlight falls at a steady speed to the dried level and
-            # every LED comes down with it in proportion to its height above dried
-            hi = 1 - BLOOD["speed"] * max(0.0, t - BLOOD["wet"])
-            k = (hi - BLOOD["dried"]) / (1 - BLOOD["dried"])
-            drive = [BLOOD_PEAK * (BLOOD["dried"] + (f - BLOOD["dried"]) * k) ** GAMMA for f in sp.fresh]
-        else:
-            drive = [blood_fade_drive(t - BLOOD_DRIED_AT)] * (N * N)   # the dried splat, evenly
+        hi, body = blood_drives(t)
         for n, (i, j, dist, _rainbow) in enumerate(LEDS):
             a = sp.cover[n]
             if ease < 1:
@@ -508,8 +507,11 @@ class Ripples:
                 a = max(a, clamp(1 - (dist - BLOOD_IMPACT) / PITCH, 0.0, 1.0) * (1 - ease))
             if a <= 0:
                 continue
+            # the cell's mix of highlight and body, by area (all body where only the impact covers it)
+            share = min(1.0, sp.spot[n] / sp.cover[n]) if sp.cover[n] > 0 else 0.0
+            drive = body + (hi - body) * share
             p = px[j][i]
-            p[0] = drive[n] * a + p[0] * (1 - a)          # pure red
+            p[0] = drive * a + p[0] * (1 - a)             # pure red
             p[1] *= 1 - a
             p[2] *= 1 - a
 
