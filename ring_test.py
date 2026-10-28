@@ -25,12 +25,15 @@ The colour scheme changes on every drop, warm -> cool -> pride -> warm ...
 
 --scheme bloody swaps the ripples for Muon Ripple's blood: each drop splats where it
 lands (a seeded, lumpy splat with spikes and droplets), spreading from the ripple's
-8 mm impact circle in 0.3 s (--splat-land), then dries from fresh red through dark red to
+8 mm impact circle in 0.18 s (--splat-land), then dries from fresh red through rust to
 black with no hold, 3.75 s in all, at 0.7 of the page's colours (--splat-level). Newer splats land on top of older ones. Rare drops splat bigger.
 
 Colours, fades and glitter are worked out in display units and turned into LED drive
 levels with a 2.2 gamma, as the Muon Ripple board does, so a ring dims the way it looks
-on the simulation page instead of lingering at the bottom of the LEDs' range.
+on the simulation page instead of lingering at the bottom of the LEDs' range. Drive levels
+are temporally dithered: each LED carries the fraction it couldn't show into the next
+frame, so slow fades near black glide instead of stepping through the bottom few of the
+LEDs' 256 levels (--no-dither to compare).
 
 --scheme pumpkin swaps the ripples for Halloween: each drop grows a jack-o'-lantern
 from a dot at the centre to full panel size in 0.9 s, holds it, then fades it out.
@@ -62,6 +65,7 @@ CENTRE = (N - 1) / 2         # 7.5: ripples land between the 4 middle LEDs
 PITCH = 10.0                 # mm between LEDs
 FPS = 60                     # as the Muon Ripple board
 GAMMA = 2.2                  # display units -> LED drive levels (linear light)
+DITHER_FLOOR = 0.5           # drive levels below this show as off rather than dithered
 
 # ---- power model (WS2812B, conservative) ------------------------------------
 MA_PER_CHANNEL = 20.0        # mA per colour channel at 255 (~60 mA per LED at full white)
@@ -94,16 +98,19 @@ GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "
 # A drop from the ceiling splats on the lid: it lands as the ripple's impact circle and
 # spreads to the full splatter on an ease-out, then one continuous curve takes it from
 # fresh through dried to black, with no hold.
-# On the panel, behind the cover, a splat needs a slower landing and dimmer colours than
-# on the simulation page (0.18 s, full colour) to look the same: --splat-land, --splat-level.
-BLOOD = {"fresh": (240, 16, 22), "gloss": (255, 70, 60), "dried": (100, 14, 10),
+# Tuned on the panel, behind the cover: the page's colours read too bright there and its pink
+# sheen reads pink, so the splat runs dimmer, the sheen is a hotter red, and it dries through
+# rust (red with some orange) instead of dark red. --splat-land and --splat-level tune it.
+BLOOD = {"fresh": (240, 16, 22), "gloss": (255, 40, 12), "dried": (100, 14, 10),
+         "rust": (1.0, 0.57, 0.12),       # hue it dries to, as a share of red (display units)
          "level": 0.7,                    # scales the colours: a solid splat reads brighter than a ring
-         "land": 0.3, "wet": 0.45, "dry": 3.3}
+         "shine": 0.6,                    # how far the wet centre goes towards the gloss colour
+         "land": 0.18, "wet": 0.45, "dry": 3.3}
 BLOOD_TOTAL = 3.75                         # s, landing to black; drying starts once it has landed
 BLOOD_IMPACT = 8.0                         # mm
 BLOOD_SAMPLES = 3                          # coverage samples per LED cell, each way
-# quadratic Bezier fresh -> black whose midpoint is the dried colour
-BLOOD_CTRL = tuple(2 * d - 0.5 * f for d, f in zip(BLOOD["dried"], BLOOD["fresh"]))
+# brightness: a quadratic Bezier fresh -> black whose midpoint is the dried red
+BLOOD_CTRL_R = 2 * BLOOD["dried"][0] - 0.5 * BLOOD["fresh"][0]
 
 # ---- shapes: pumpkins and the soccer ball --------------------------------------------
 # Pixel art on the panel's own 16x16 grid, so at full size every LED is cleanly lit or
@@ -223,10 +230,14 @@ def to_drive(v):
 
 
 def blood_colour(t):
-    """Splat colour t s after landing: fresh, then drying through dark red to black."""
+    """Splat colour t s after landing: fresh red, then drying through rust to black. The hue
+    turns from fresh to rust over the first half of the drying while the brightness falls
+    along one smooth curve, so it stays rust instead of yellowing as it goes dark."""
     u = smooth(clamp((t - BLOOD["wet"]) / BLOOD["dry"], 0.0, 1.0))   # eases out of fresh and into black
-    a, b = (1 - u) * (1 - u), 2 * (1 - u) * u
-    return tuple(BLOOD["level"] * (a * f + b * c) for f, c in zip(BLOOD["fresh"], BLOOD_CTRL))
+    red = (1 - u) * (1 - u) * BLOOD["fresh"][0] + 2 * (1 - u) * u * BLOOD_CTRL_R
+    h = smooth(min(1.0, 2 * u))
+    fresh = tuple(c / BLOOD["fresh"][0] for c in BLOOD["fresh"])
+    return tuple(BLOOD["level"] * red * ((1 - h) * f + h * r) for f, r in zip(fresh, BLOOD["rust"]))
 
 
 def mulberry32(a):
@@ -444,7 +455,7 @@ class Ripples:
                 continue
             c = col
             if shine > 0:
-                w = shine * math.exp(-((dist / (0.45 * sp.r0)) ** 2))
+                w = BLOOD["shine"] * shine * math.exp(-((dist / (0.45 * sp.r0)) ** 2))
                 c = tuple(v + (g - v) * w for v, g in zip(col, gloss))
             p = px[j][i]
             for k in range(3):
@@ -505,13 +516,29 @@ def power_scale(frame, level, max_amps):
     return max(0.0, (max_amps - idle) / (amps - idle))
 
 
-def encode(frame, level, layout):
-    """Frame -> GRB byte buffer in data-chain order."""
+def encode(frame, level, layout, carry=None):
+    """Frame -> GRB byte buffer in data-chain order. With `carry` (a list of N*N*3 floats
+    kept between frames), each channel is temporally dithered: the fraction it couldn't
+    show is carried into the next frame, so a level of 1.4 shows as 1, 2, 1, 1, 2 ..."""
     buf = bytearray(N * N * 3)
     for y in range(N):
         for x in range(N):
             i = 3 * xy_to_index(x, y, layout)
-            r, g, b = (int(round(min(255.0, c) * level)) for c in frame[y][x])
+            rgb = []
+            for k, c in enumerate(frame[y][x]):
+                v = min(255.0, c) * level
+                if carry is None:
+                    rgb.append(int(round(v)))
+                    continue
+                if v < DITHER_FLOOR:           # sparser than every other frame would visibly blink
+                    carry[i + k] = 0.0
+                    rgb.append(0)
+                    continue
+                v += carry[i + k]
+                q = min(255, max(0, int(v + 0.5)))
+                carry[i + k] = v - q
+                rgb.append(q)
+            r, g, b = rgb
             buf[i], buf[i + 1], buf[i + 2] = g, r, b
     return buf
 
@@ -520,7 +547,8 @@ def encode(frame, level, layout):
 class Panel:
     """The real panel on a Pi 5 GPIO pin, via Adafruit's PIO driver."""
 
-    def __init__(self, gpio):
+    def __init__(self, gpio, dither=True):
+        self.carry = [0.0] * (N * N * 3) if dither else None
         try:
             from adafruit_raspberry_pi5_neopixel_write import neopixel_write
         except ImportError:
@@ -530,7 +558,7 @@ class Panel:
         self.id = gpio           # the driver reads the BCM GPIO number from .id
 
     def show(self, frame, level, layout):
-        self._write(self, encode(frame, level, layout))
+        self._write(self, encode(frame, level, layout, self.carry))
 
     def off(self):
         self._write(self, bytearray(N * N * 3))
@@ -592,6 +620,8 @@ def main():
     p.add_argument("--layout", choices=["serpentine", "progressive"], default="serpentine",
                    help="data-chain wiring of the matrix (default serpentine, as on Adafruit's 16x16)")
     p.add_argument("--seed", type=int, default=None, help="random seed, to repeat the same run of drops")
+    p.add_argument("--no-dither", action="store_true",
+                   help="round each frame's levels instead of dithering them (to compare slow fades)")
     p.add_argument("--preview", action="store_true", help="draw in the terminal instead of driving the panel")
     args = p.parse_args()
 
@@ -612,7 +642,7 @@ def main():
         p.error(f"--max-amps must be above the panel's idle draw ({N * N * MA_IDLE_PER_LED / 1000.0:.2f} A)")
 
     rng = random.Random(args.seed)
-    out = TerminalPreview() if args.preview else Panel(args.pin)
+    out = TerminalPreview() if args.preview else Panel(args.pin, dither=not args.no_dither)
     field = Ripples(rng, args.brightness, args.max_amps)
 
     # systemd / kill send SIGTERM; turn it into the same clean exit as Ctrl+C.
@@ -622,6 +652,7 @@ def main():
 
     try:
         start = time.monotonic()
+        frames = 0
         next_drop = start            # the first drop lands straight away
         count, stripe, last_limit_log = 0, 0, -1.0
         while True:
@@ -651,13 +682,15 @@ def main():
                 log(f"  POWER-LIMITED: dimmed to {level:.0%} to stay under {args.max_amps} A", out)
                 last_limit_log = now
             out.show(frame, level, args.layout)
+            frames += 1
             time.sleep(max(0.0, 1.0 / FPS - (time.monotonic() - now)))
     except KeyboardInterrupt:
         pass
     finally:
         try:
             out.off()
-            log("panel off", out)
+            ran = time.monotonic() - start
+            log(f"panel off | {frames} frames in {ran:.1f} s, {frames / max(ran, 1e-9):.1f} per second", out)
         except Exception as e:  # don't hide the error that got us here
             log(f"could not blank the panel: {e}", out)
 
