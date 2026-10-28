@@ -51,10 +51,15 @@ seeded from the drop so each one is its own shape.
   fast at first and then settling.
 - It stays fresh red for 0.45 s, then dries through dark red to black in one smooth curve
   with no hold, gone about 2.95 s after landing.
-- The LEDs' bottom few levels are far apart, and in a dim room even level 1 of 255 shows, so
-  a fade that eases into black visibly stair-steps through them. Instead, once an LED gets
-  down to level 6 it goes to black in 0.15 s, evenly, so no level holds for more than a
-  frame or two.
+- The end of the fade is tuned for the LEDs, whose bottom few levels are far apart (in a dim
+  room even level 1 of 255 shows):
+  - The splat's partial coverage of an LED's cell scales its light, after the gamma. A
+    half-covered LED gives half the light, not 0.5^2.2 ≈ 22 %, so the dim edge LEDs don't
+    drop out long before the rest and the splat doesn't shrink LED by LED.
+  - The fade is one multiplier on every LED's light: the page's curve after the gamma, less
+    an offset of 10 % of the fresh level. It looks the same until near the end, then reaches
+    black on a straight line instead of easing in. Each of the last few levels holds for
+    2–3 frames, and the whole splat goes dark within about 0.2 s.
 - Its colours run at 0.7 of the page's: a solid splat reads much brighter than a thin ring.
 - While it's wet, for about its first 0.85 s, it catches the light. `--sheen` picks how:
   - `glow` (default): its centre goes part way to a hotter red.
