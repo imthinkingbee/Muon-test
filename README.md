@@ -56,13 +56,6 @@ seeded from the drop so each one is its own shape.
   in 0.18 s, fast at first and then settling, then holds until 0.45 s.
 - **Fading (0.45–3.05 s):** the whole splat fades out together on one smooth curve: a
   slight ease-in from the hold, then a gentle arc to black.
-- An LED's faint levels are coarse, and it can't go below level 1, which still shows through
-  the cover in a dim room. So for its faint levels each LED alternates between the levels
-  either side of what it should show, in the right proportion, and goes below level 1 by
-  showing it for a shrinking share of frames; the eye and the cover blend that into a fade
-  that goes smoothly to nothing. Neighbouring LEDs run at different phases so they never
-  flash in step. It runs at 120 frames per second by default to keep that blending fast;
-  `--no-dither` turns it off, to compare.
 - It's pure red: the page's colours carry a touch of green and blue, which on the LEDs
   rounds to level 1 of 255 and shows in a dim room as a pink tint.
 - Newer splats land on top of older ones, covering them where they overlap.
@@ -245,8 +238,8 @@ drop    3 | pride         | rare    |  17.2 MeV | brightness x1.60
 | `--rate R` | `0.4` | average drops per second, at random times. `1.7` = sea level. |
 | `--brightness B` | `1.0` | overall brightness from 0 to 1 (e.g. `0.25`) |
 | `--listen` | off | drop nothing on its own: each press of the space bar drops a muon, `r` drops a rare one. For watching one drop at a time. |
-| `--fps F` | `120` | frames per second. The panel can take about 125; the exit log shows what the Pi managed. |
-| `--no-dither` | off | round every LED to the nearest level instead of blending its faint levels over frames, to compare |
+| `--fps F` | `60` | frames per second. The panel can take about 125; the exit log shows what the Pi managed. |
+| `--gamma-test [COLOUR]` | off | a still test pattern for the gamma curve (see below). COLOUR: `red` (default), `green`, `blue`, `white` |
 | `--duration S` | `0` | stop after *S* seconds (`0` = run until Ctrl+C) |
 | `--seed N` | random | repeat exactly the same run of drops (handy for comparing two covers) |
 | `--max-amps A` | `3.5` | panel current limit (see below) |
@@ -268,6 +261,22 @@ python3 ring_test.py --brightness 0.25      # dimmer, to see when light stops ge
 python3 ring_test.py --seed 42              # same drops every time: swap covers and compare
 python3 ring_test.py --preview              # try it out without the panel
 ```
+
+### Gamma test
+
+```bash
+python3 ring_test.py --gamma-test          # or --gamma-test white
+```
+
+A still pattern of two snakes, each running along a row, down one, back along the next and
+so on, with a blank row between lit rows (the turns light the blank rows' end LEDs). Each
+fades from 100 % at its head (top left) to 0 at its tail:
+
+- **Top snake:** straight in drive levels, 255 down to 0 evenly.
+- **Bottom snake:** through the gamma curve the animations use (2.2), which should look
+  evenly graded from head to tail if the curve suits the panel and cover.
+
+`--brightness` scales both, as it does the animations.
 
 ### Brightness and the power limit
 
@@ -291,7 +300,7 @@ If you use a bigger supply, raise `--max-amps` to about 90 % of its rating.
 - The ripples land between the four middle LEDs and spread symmetrically, so they look the
   same whichever corner the data enters and whichever way the rows run. (In the artifact, a
   drop lands wherever the muon hit. Here every drop lands in the centre.)
-- Frames are sent at 120 per second by default (`--fps`), and
+- Frames are sent at 60 per second by default (`--fps`), and
   each one takes a few milliseconds to work out. A splat's shape is worked out once as it
   lands, which takes a few milliseconds more.
 - `--preview` undoes the gamma, so the terminal shows the panel as it looks, not its raw

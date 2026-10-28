@@ -67,18 +67,9 @@ import time
 N = 16                       # 16 x 16 LEDs
 CENTRE = (N - 1) / 2         # 7.5: ripples land between the 4 middle LEDs
 PITCH = 10.0                 # mm between LEDs
-FPS = 120                    # default frames per second (--fps): fast enough to blend the faintest levels
+FPS = 60                     # default frames per second (--fps)
 PANEL_MAX_FPS = 125          # 256 LEDs x 24 bits at 800 kbit/s is 7.7 ms, plus the 0.3 ms latch
 GAMMA = 2.2                  # display units -> LED drive levels (linear light)
-# An LED's faint levels are coarse, and it can't go below level 1, which still shows through
-# the cover in a dim room. So under FINE_BELOW each LED alternates between the two levels
-# either side of what it should show, in the right proportion (carrying the remainder from
-# frame to frame), and goes below level 1 the same way, by showing level 1 for a shrinking
-# share of frames; at the frame rate the eye and the cover blend that into a steady glow that
-# fades out smoothly. Each LED runs its pattern at its own phase, so neighbours never flash
-# in step. Under MIN_SHARE of level 1 it's off. Whole levels come out unchanged.
-FINE_BELOW = 32.0
-MIN_SHARE = 0.04
 
 # ---- power model (WS2812B, conservative) ------------------------------------
 MA_PER_CHANNEL = 20.0        # mA per colour channel at 255 (~60 mA per LED at full white)
@@ -117,7 +108,7 @@ GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "
 # It lands as the ripple's impact circle and spreads to the full splatter on an ease-out
 # (0.18 s), holds until 0.45 s, then the whole splat fades out together, by 3.05 s, on one
 # smooth curve that eases out of the hold and eases into black (a smoothstep on perceived
-# brightness). Its faintest stretch is shown below the LEDs' bottom level (see FINE_BELOW).
+# brightness).
 # On the panel the splat is pure red: any green or blue rounds to level 1 on the LEDs and
 # reads pink in a dim room.
 BLOOD = {"highlight": 102.0, "body": 31.0,   # drive levels, before projection
@@ -554,39 +545,50 @@ def power_scale(frame, level, max_amps):
     return max(0.0, (max_amps - idle) / (amps - idle))
 
 
-def encode(frame, level, layout, carry=None):
-    """Frame -> GRB byte buffer in data-chain order. With `carry` (N*N*3 floats kept between
-    frames), levels under FINE_BELOW are shown as the right share of frames at the two levels
-    either side (see FINE_BELOW); without it, every level rounds to the nearest."""
+def encode(frame, level, layout):
+    """Frame -> GRB byte buffer in data-chain order, each level rounded to the nearest."""
     buf = bytearray(N * N * 3)
     for y in range(N):
         for x in range(N):
             i = 3 * xy_to_index(x, y, layout)
-            rgb = []
-            for k, c in enumerate(frame[y][x]):
-                v = min(255.0, c) * level
-                if carry is None or v >= FINE_BELOW:
-                    rgb.append(min(255, int(v + 0.5)))
-                    continue
-                if v < MIN_SHARE:
-                    rgb.append(0)
-                    continue
-                acc = carry[i + k] + v
-                q = int(acc)
-                carry[i + k] = acc - q
-                rgb.append(q)
-            r, g, b = rgb
+            r, g, b = (min(255, int(min(255.0, c) * level + 0.5)) for c in frame[y][x])
             buf[i], buf[i + 1], buf[i + 2] = g, r, b
     return buf
+
+
+def snake(rows):
+    """LED (x, y) positions of a snake through these rows: along the first, down one, back
+    along the next, and so on; the rows between the lit ones are blank but for the turns."""
+    path = []
+    for k, r in enumerate(rows):
+        xs = range(N) if k % 2 == 0 else range(N - 1, -1, -1)
+        path += [(x, r) for x in xs]
+        if k + 1 < len(rows):
+            path += [(path[-1][0], y) for y in range(r + 1, rows[k + 1])]
+    return path
+
+
+GAMMA_TEST_COLOURS = {"red": (1, 0, 0), "green": (0, 1, 0), "blue": (0, 0, 1), "white": (1, 1, 1)}
+
+
+def gamma_test_frame(colour):
+    """Two snakes, 100 % at the head to 0 at the tail: the top one straight in drive levels,
+    the bottom one through the display-units-to-drive gamma (perceptually even, if it's right)."""
+    frame = [[[0.0, 0.0, 0.0] for _ in range(N)] for _ in range(N)]
+    rgb = GAMMA_TEST_COLOURS[colour]
+    for path, curve in ((snake([0, 2, 4, 6]), lambda u: 255.0 * u),
+                        (snake([8, 10, 12, 14]), lambda u: to_drive(255.0 * u))):
+        for k, (x, y) in enumerate(path):
+            u = 1 - k / (len(path) - 1)
+            frame[y][x] = [c * curve(u) for c in rgb]
+    return frame
 
 
 # ---- outputs -----------------------------------------------------------------
 class Panel:
     """The real panel on a Pi 5 GPIO pin, via Adafruit's PIO driver."""
 
-    def __init__(self, gpio, fine=True):
-        # each LED's pattern starts at its own phase, so the panel never pulses in step
-        self.carry = [((n * 0.618034) % 1.0) for n in range(N * N * 3)] if fine else None
+    def __init__(self, gpio):
         try:
             from adafruit_raspberry_pi5_neopixel_write import neopixel_write
         except ImportError:
@@ -596,7 +598,7 @@ class Panel:
         self.id = gpio           # the driver reads the BCM GPIO number from .id
 
     def show(self, frame, level, layout):
-        self._write(self, encode(frame, level, layout, self.carry))
+        self._write(self, encode(frame, level, layout))
 
     def off(self):
         self._write(self, bytearray(N * N * 3))
@@ -691,8 +693,10 @@ def main():
     p.add_argument("--layout", choices=["serpentine", "progressive"], default="serpentine",
                    help="data-chain wiring of the matrix (default serpentine, as on Adafruit's 16x16)")
     p.add_argument("--seed", type=int, default=None, help="random seed, to repeat the same run of drops")
-    p.add_argument("--no-dither", action="store_true",
-                   help="round every LED to the nearest level instead of blending its faintest levels over frames")
+    p.add_argument("--gamma-test", nargs="?", const="red", choices=sorted(GAMMA_TEST_COLOURS), metavar="COLOUR",
+                   help="show two snakes fading from 100 %% at the head to 0 at the tail, the top one "
+                        "straight in drive levels, the bottom one through the gamma curve; COLOUR is "
+                        "red (default), green, blue or white")
     p.add_argument("--preview", action="store_true", help="draw in the terminal instead of driving the panel")
     args = p.parse_args()
 
@@ -708,7 +712,7 @@ def main():
         p.error(f"--max-amps must be above the panel's idle draw ({N * N * MA_IDLE_PER_LED / 1000.0:.2f} A)")
 
     rng = random.Random(args.seed)
-    out = TerminalPreview() if args.preview else Panel(args.pin, fine=not args.no_dither)
+    out = TerminalPreview() if args.preview else Panel(args.pin)
     field = Ripples(rng, args.brightness, args.max_amps)
     keys = Keys() if args.listen else None
     if args.fps > PANEL_MAX_FPS:
@@ -721,6 +725,24 @@ def main():
     def stop(signum, _frame):
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, stop)
+
+    if args.gamma_test:
+        frame = gamma_test_frame(args.gamma_test)
+        level = args.brightness * power_scale(frame, args.brightness, args.max_amps)
+        log(f"gamma test, {args.gamma_test}: top snake straight in drive levels, bottom through "
+            f"the gamma {GAMMA}; head at {level:.0%}" + ("" if level >= args.brightness else " (power-limited)")
+            + ". Ctrl+C to stop", out)
+        start = time.monotonic()
+        try:
+            while not (args.duration and time.monotonic() - start >= args.duration):
+                out.show(frame, level, args.layout)
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            out.off()
+            log("panel off", out)
+        return
 
     count = stripe = 0
 
