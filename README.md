@@ -274,7 +274,9 @@ fades from 100 % at its head (top left) to 0 at its tail:
 
 - **Top snake:** straight in drive levels, 255 down to 0 evenly.
 - **Bottom snake:** through the gamma curve the animations use (2.2), which should look
-  evenly graded from head to tail if the curve suits the panel and cover.
+  evenly graded from head to tail if the curve suits the panel and cover. The curve starts
+  at level 1, the LED's dimmest, which still shows through the cover: anything meant to be
+  lit gets at least level 1, and only the tail's last LED, at 0, is off.
 
 `--brightness` scales both, as it does the animations.
 

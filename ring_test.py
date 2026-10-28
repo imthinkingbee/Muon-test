@@ -235,9 +235,21 @@ def clamp(v, lo, hi):
     return lo if v < lo else hi if v > hi else v
 
 
+# Level 1 is the LED's dimmest and still shows through the cover, so the curve starts there:
+# anything meant to be lit, however faint, gets at least level 1, with the curve spread over
+# levels 1 to 255 above it. Only values below DARK (display units) are black.
+DARK = 1.0
+DARK_DRIVE = 255.0 * (DARK / 255.0) ** GAMMA
+
+
+def lift(d):
+    """Drive level from the plain gamma curve -> drive level starting at the LED's level 1."""
+    return 0.0 if d < DARK_DRIVE else 1.0 + d * 254.0 / 255.0
+
+
 def to_drive(v):
     """Display units (0..255, as the simulation page draws) -> LED drive level (0..255)."""
-    return 255.0 * clamp(v / 255.0, 0.0, 1.0) ** GAMMA
+    return lift(255.0 * clamp(v / 255.0, 0.0, 1.0) ** GAMMA)
 
 
 def mulberry32(a):
@@ -486,7 +498,7 @@ class Ripples:
             share = min(1.0, sp.spot[n] / sp.cover[n]) if sp.cover[n] > 0 else 0.0
             drive = (body + (hi - body) * share) * m
             p = px[j][i]
-            p[0] = drive * a + p[0] * (1 - a)             # pure red
+            p[0] = lift(drive * a) + p[0] * (1 - a)       # pure red; faint cells still at least level 1
             p[1] *= 1 - a
             p[2] *= 1 - a
 
