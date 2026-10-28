@@ -50,7 +50,7 @@ seeded from the drop so each one is its own shape.
 - It lands as the ripple's 8 mm impact circle and spreads to the full splatter in 0.18 s,
   fast at first and then settling.
 - It stays fresh red for 0.45 s, then dries through dark red to black in one smooth curve
-  with no hold, gone about 2.95 s after landing.
+  with no hold, gone about 2.2 s after landing.
 - The end of the fade is tuned for the LEDs, whose bottom few levels are far apart (in a dim
   room even level 1 of 255 shows):
   - The splat's partial coverage of an LED's cell scales its light, after the gamma. A
@@ -59,15 +59,16 @@ seeded from the drop so each one is its own shape.
   - The fade is one multiplier on every LED's light: the page's curve after the gamma, less
     an offset of 10 % of the fresh level. It looks the same until near the end, then reaches
     black on a straight line instead of easing in. Each of the last few levels holds for
-    2–3 frames, and the whole splat goes dark within about 0.2 s.
-- Its colours run at 0.7 of the page's: a solid splat reads much brighter than a thin ring.
+    1–2 frames, and the whole splat goes dark within about 0.1 s.
+- It runs at 0.7 of the page's brightness, since a solid splat reads much brighter than a
+  thin ring, and in pure red. The page's colours carry a touch of green and blue, which on
+  the LEDs rounds to level 1 of 255 and shows in a dim room as a pink tint.
 - While it's wet, for about its first 0.85 s, it catches the light. `--sheen` picks how:
-  - `glow` (default): its centre goes part way to a hotter red.
+  - `glow` (default): its centre goes part way to a brighter red.
   - `spec`: a specular glint. The LED where a light up and to the north-west would catch
-    the splat, about a third of its radius from the impact, goes white from the moment it
-    lands while the splat is wet (0.45 s), then goes off in 0.12 s: a slow fade would pass
-    through pink. The cover blends it into a highlight on the red. If the glint falls
-    between two LEDs it's shared between them.
+    the splat, about a third of its radius from the impact, flashes white as it lands and
+    fades back to the red over 0.35 s. The cover blends it into a highlight on the red. If
+    the glint falls between two LEDs it's shared between them.
   - `none`: no sheen.
 - Newer splats land on top of older ones, covering them where they overlap.
 - Rare drops (over 15.5 MeV) splat bigger.
