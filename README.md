@@ -55,9 +55,13 @@ seeded from the drop so each one is its own shape.
 - **Fresh:** it lands as the ripple's 8 mm impact circle and spreads to the full splatter
   in 0.18 s, fast at first and then settling, then holds until 0.45 s.
 - **Fading (0.45–3.05 s):** the whole splat fades out together on one smooth curve: a
-  slight ease-in from the hold, then a gentle arc to black. The body has only 31 drive
-  levels to come down through, so its last few each hold for 0.1–0.17 s (in a dim room
-  even level 1 of 255 shows); a faster finish would hide that, at the cost of a cliff.
+  slight ease-in from the hold, then a gentle arc to black.
+- The body has only 31 drive levels to fade through, and in a dim room every level shows.
+  Rounded to the nearest level, every body LED would step on the same frame, about every
+  5 frames, and the fade would visibly stair-step. Instead each LED rounds at its own fixed
+  threshold (a 4×4 Bayer pattern), so neighbours step at different moments and the cover
+  blends them into a much finer fade. Each LED still only ever steps down, so nothing
+  flickers. `--no-dither` turns it off, to compare.
 - It's pure red: the page's colours carry a touch of green and blue, which on the LEDs
   rounds to level 1 of 255 and shows in a dim room as a pink tint.
 - Newer splats land on top of older ones, covering them where they overlap.
@@ -241,6 +245,7 @@ drop    3 | pride         | rare    |  17.2 MeV | brightness x1.60
 | `--brightness B` | `1.0` | overall brightness from 0 to 1 (e.g. `0.25`) |
 | `--listen` | off | drop nothing on its own: each press of the space bar drops a muon, `r` drops a rare one. For watching one drop at a time. |
 | `--fps F` | `60` | frames per second. The panel can take about 125. |
+| `--no-dither` | off | round every LED to the nearest level instead of at its own threshold, to compare slow fades |
 | `--duration S` | `0` | stop after *S* seconds (`0` = run until Ctrl+C) |
 | `--seed N` | random | repeat exactly the same run of drops (handy for comparing two covers) |
 | `--max-amps A` | `3.5` | panel current limit (see below) |

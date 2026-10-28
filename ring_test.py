@@ -70,6 +70,11 @@ PITCH = 10.0                 # mm between LEDs
 FPS = 60                     # default frames per second, as the Muon Ripple board (--fps)
 PANEL_MAX_FPS = 125          # 256 LEDs x 24 bits at 800 kbit/s is 7.7 ms, plus the 0.3 ms latch
 GAMMA = 2.2                  # display units -> LED drive levels (linear light)
+# Ordered (Bayer) rounding: each LED rounds its drive level at its own fixed threshold, so in
+# a slow fade neighbouring LEDs step to the next level at different moments and the cover,
+# which blends a few LEDs, shows the fade in much finer steps. Each LED still only steps one
+# way (nothing flickers); whole levels, like the shapes' pixel art, come out unchanged.
+BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
 
 # ---- power model (WS2812B, conservative) ------------------------------------
 MA_PER_CHANNEL = 20.0        # mA per colour channel at 255 (~60 mA per LED at full white)
@@ -549,13 +554,15 @@ def power_scale(frame, level, max_amps):
     return max(0.0, (max_amps - idle) / (amps - idle))
 
 
-def encode(frame, level, layout):
-    """Frame -> GRB byte buffer in data-chain order."""
+def encode(frame, level, layout, dither=True):
+    """Frame -> GRB byte buffer in data-chain order, each LED rounding at its Bayer threshold
+    (or to the nearest level, without dither)."""
     buf = bytearray(N * N * 3)
     for y in range(N):
         for x in range(N):
             i = 3 * xy_to_index(x, y, layout)
-            r, g, b = (int(round(min(255.0, c) * level)) for c in frame[y][x])
+            th = (BAYER[y % 4][x % 4] + 0.5) / 16 if dither else 0.5
+            r, g, b = (min(255, int(min(255.0, c) * level + th)) for c in frame[y][x])
             buf[i], buf[i + 1], buf[i + 2] = g, r, b
     return buf
 
@@ -564,7 +571,8 @@ def encode(frame, level, layout):
 class Panel:
     """The real panel on a Pi 5 GPIO pin, via Adafruit's PIO driver."""
 
-    def __init__(self, gpio):
+    def __init__(self, gpio, dither=True):
+        self.dither = dither
         try:
             from adafruit_raspberry_pi5_neopixel_write import neopixel_write
         except ImportError:
@@ -574,7 +582,7 @@ class Panel:
         self.id = gpio           # the driver reads the BCM GPIO number from .id
 
     def show(self, frame, level, layout):
-        self._write(self, encode(frame, level, layout))
+        self._write(self, encode(frame, level, layout, self.dither))
 
     def off(self):
         self._write(self, bytearray(N * N * 3))
@@ -669,6 +677,8 @@ def main():
     p.add_argument("--layout", choices=["serpentine", "progressive"], default="serpentine",
                    help="data-chain wiring of the matrix (default serpentine, as on Adafruit's 16x16)")
     p.add_argument("--seed", type=int, default=None, help="random seed, to repeat the same run of drops")
+    p.add_argument("--no-dither", action="store_true",
+                   help="round every LED to the nearest level, to compare (slow fades then step together)")
     p.add_argument("--preview", action="store_true", help="draw in the terminal instead of driving the panel")
     args = p.parse_args()
 
@@ -684,7 +694,7 @@ def main():
         p.error(f"--max-amps must be above the panel's idle draw ({N * N * MA_IDLE_PER_LED / 1000.0:.2f} A)")
 
     rng = random.Random(args.seed)
-    out = TerminalPreview() if args.preview else Panel(args.pin)
+    out = TerminalPreview() if args.preview else Panel(args.pin, dither=not args.no_dither)
     field = Ripples(rng, args.brightness, args.max_amps)
     keys = Keys() if args.listen else None
     if args.fps > PANEL_MAX_FPS:
