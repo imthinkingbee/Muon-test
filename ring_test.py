@@ -25,15 +25,18 @@ The colour scheme changes on every drop, warm -> cool -> pride -> warm ...
 
 --scheme bloody swaps the ripples for Muon Ripple's blood: each drop splats where it
 lands (a seeded, lumpy splat with spikes and droplets), spreading from the ripple's
-8 mm impact circle in 0.18 s (--splat-land), then dries from fresh red through rust to
-black with no hold, 3.75 s in all, at 0.7 of the page's colours (--splat-level). Newer splats land on top of older ones. Rare drops splat bigger.
+8 mm impact circle in 0.18 s, then dries from fresh red through dark red to black with
+no hold, 3.75 s in all, at 0.7 of the page's colours. Newer splats land on top of older
+ones. Rare drops splat bigger. --sheen picks how the wet splat catches the light: none,
+glow (its centre goes a hotter red) or spec (one or two LEDs go white, and the cover
+blends them into a highlight).
 
 Colours, fades and glitter are worked out in display units and turned into LED drive
 levels with a 2.2 gamma, as the Muon Ripple board does, so a ring dims the way it looks
-on the simulation page instead of lingering at the bottom of the LEDs' range. Drive levels
-are temporally dithered: each LED carries the fraction it couldn't show into the next
-frame, so slow fades near black glide instead of stepping through the bottom few of the
-LEDs' 256 levels (--no-dither to compare).
+on the simulation page instead of lingering at the bottom of the LEDs' range.
+
+--listen drops nothing on its own: each press of the space bar drops one muon (r drops a
+rare one), so a single splat or ripple can be watched on its own.
 
 --scheme pumpkin swaps the ripples for Halloween: each drop grows a jack-o'-lantern
 from a dot at the centre to full panel size in 0.9 s, holds it, then fades it out.
@@ -63,9 +66,9 @@ import time
 N = 16                       # 16 x 16 LEDs
 CENTRE = (N - 1) / 2         # 7.5: ripples land between the 4 middle LEDs
 PITCH = 10.0                 # mm between LEDs
-FPS = 60                     # as the Muon Ripple board
+FPS = 60                     # default frames per second, as the Muon Ripple board (--fps)
+PANEL_MAX_FPS = 125          # 256 LEDs x 24 bits at 800 kbit/s is 7.7 ms, plus the 0.3 ms latch
 GAMMA = 2.2                  # display units -> LED drive levels (linear light)
-DITHER_FLOOR = 0.5           # drive levels below this show as off rather than dithered
 
 # ---- power model (WS2812B, conservative) ------------------------------------
 MA_PER_CHANNEL = 20.0        # mA per colour channel at 255 (~60 mA per LED at full white)
@@ -97,20 +100,26 @@ GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "
 # ---- blood (Muon Ripple design) -------------------------------------------------------
 # A drop from the ceiling splats on the lid: it lands as the ripple's impact circle and
 # spreads to the full splatter on an ease-out, then one continuous curve takes it from
-# fresh through dried to black, with no hold.
-# Tuned on the panel, behind the cover: the page's colours read too bright there and its pink
-# sheen reads pink, so the splat runs dimmer, the sheen is a hotter red, and it dries through
-# rust (red with some orange) instead of dark red. --splat-land and --splat-level tune it.
-BLOOD = {"fresh": (240, 16, 22), "gloss": (255, 40, 12), "dried": (100, 14, 10),
-         "rust": (1.0, 0.57, 0.12),       # hue it dries to, as a share of red (display units)
+# fresh through dried to black, with no hold. On the panel, behind the cover, the page's
+# colours read too bright, so the splat runs at 0.7 of them.
+BLOOD = {"fresh": (240, 16, 22), "dried": (100, 14, 10),
          "level": 0.7,                    # scales the colours: a solid splat reads brighter than a ring
-         "shine": 0.6,                    # how far the wet centre goes towards the gloss colour
          "land": 0.18, "wet": 0.45, "dry": 3.3}
-BLOOD_TOTAL = 3.75                         # s, landing to black; drying starts once it has landed
 BLOOD_IMPACT = 8.0                         # mm
 BLOOD_SAMPLES = 3                          # coverage samples per LED cell, each way
-# brightness: a quadratic Bezier fresh -> black whose midpoint is the dried red
-BLOOD_CTRL_R = 2 * BLOOD["dried"][0] - 0.5 * BLOOD["fresh"][0]
+# quadratic Bezier fresh -> black whose midpoint is the dried colour
+BLOOD_CTRL = tuple(2 * d - 0.5 * f for d, f in zip(BLOOD["dried"], BLOOD["fresh"]))
+# The wet splat catches the light for its first ~0.85 s (--sheen):
+#   glow  the centre goes part way to a hotter red (the page's pink gloss reads pink here)
+#   spec  a specular point: one or two LEDs go white where a light up and to the north-west
+#         would glint, and the cover blends them into a highlight on the red
+SHEENS = ("none", "glow", "spec")
+GLOW = {"colour": (255, 40, 12), "amount": 0.6}
+SPEC = {"offset": 0.35,                    # glint this far from the impact, in splat radii ...
+        "dir": (-math.sqrt(0.5), math.sqrt(0.5)),   # ... towards the light (north-west)
+        "white": (255, 245, 235),          # display units: a slightly warm white
+        "amount": 0.8,                     # how far the brightest glint LED goes to white
+        "min": 0.15}                       # a second LED glints only above this share of the first
 
 # ---- shapes: pumpkins and the soccer ball --------------------------------------------
 # Pixel art on the panel's own 16x16 grid, so at full size every LED is cleanly lit or
@@ -230,14 +239,28 @@ def to_drive(v):
 
 
 def blood_colour(t):
-    """Splat colour t s after landing: fresh red, then drying through rust to black. The hue
-    turns from fresh to rust over the first half of the drying while the brightness falls
-    along one smooth curve, so it stays rust instead of yellowing as it goes dark."""
+    """Splat colour t s after landing: fresh, then drying through dark red to black."""
     u = smooth(clamp((t - BLOOD["wet"]) / BLOOD["dry"], 0.0, 1.0))   # eases out of fresh and into black
-    red = (1 - u) * (1 - u) * BLOOD["fresh"][0] + 2 * (1 - u) * u * BLOOD_CTRL_R
-    h = smooth(min(1.0, 2 * u))
-    fresh = tuple(c / BLOOD["fresh"][0] for c in BLOOD["fresh"])
-    return tuple(BLOOD["level"] * red * ((1 - h) * f + h * r) for f, r in zip(fresh, BLOOD["rust"]))
+    a, b = (1 - u) * (1 - u), 2 * (1 - u) * u
+    return tuple(BLOOD["level"] * (a * f + b * c) for f, c in zip(BLOOD["fresh"], BLOOD_CTRL))
+
+
+def spec_glints(x, y, r0):
+    """LEDs that glint for a splat landing at (x, y) mm with radius r0: the specular point,
+    shared out over its four nearest LEDs by area and sharpened (squared), so it lands on one
+    LED, or splits between two when it falls between them. Returns {led index: weight 0..1}."""
+    gx = (x + SPEC["offset"] * r0 * SPEC["dir"][0]) / PITCH + CENTRE
+    gy = CENTRE - (y + SPEC["offset"] * r0 * SPEC["dir"][1]) / PITCH
+    i0, j0 = math.floor(gx), math.floor(gy)
+    fx, fy = gx - i0, gy - j0
+    w = {}
+    for di, wx in ((0, 1 - fx), (1, fx)):
+        for dj, wy in ((0, 1 - fy), (1, fy)):
+            i, j = i0 + di, j0 + dj
+            if 0 <= i < N and 0 <= j < N:
+                w[j * N + i] = (wx * wy) ** 2
+    top = max(w.values(), default=0.0)
+    return {n: v / top for n, v in w.items() if top and v / top >= SPEC["min"]}
 
 
 def mulberry32(a):
@@ -330,6 +353,7 @@ class Drop:
         seed = (struct.unpack("<I", struct.pack("<f", energy))[0] * 2654435761) & 0xFFFFFFFF
         self.splat = Splat(seed, energy, self.hot) if scheme == "bloody" else None
         self.life = BLOOD["wet"] + BLOOD["dry"] if self.splat else LIFE
+        self.glints = spec_glints(0.0, 0.0, self.splat.r0) if self.splat else {}
         # Shapes stop at 1x: above that colours clip (the orange would turn yellow).
         self.amp = min(1.0 if self.shape else 1.6, energy / FULL)
         self.stripe = stripe
@@ -361,8 +385,8 @@ class Ripples:
     drive levels; overlapping ripples add, and each splat lands on top of what's there.
     Shapes are pixel art drawn straight in drive levels, as before."""
 
-    def __init__(self, rng, level=1.0, max_amps=None):
-        self.rng = rng
+    def __init__(self, rng, level=1.0, max_amps=None, sheen="glow"):
+        self.rng, self.sheen = rng, sheen
         self.level, self.max_amps = level, max_amps
         self.drops = []
         self.sparkles = []       # [led, t0, colour, strength]
@@ -443,9 +467,9 @@ class Ripples:
         sp = d.splat
         ease = 1 - (1 - max(0.0, t) / BLOOD["land"]) ** 3 if t < BLOOD["land"] else 1.0
         rho = BLOOD_IMPACT + (sp.reach - BLOOD_IMPACT) * ease
-        shine = 1 - smooth(clamp(t / (BLOOD["wet"] + 0.4), 0.0, 1.0))
+        shine = 0.0 if self.sheen == "none" else 1 - smooth(clamp(t / (BLOOD["wet"] + 0.4), 0.0, 1.0))
         col = blood_colour(t)
-        gloss = tuple(BLOOD["level"] * g for g in BLOOD["gloss"])
+        glow = tuple(BLOOD["level"] * g for g in GLOW["colour"])
         for n, (i, j, dist, _rainbow) in enumerate(LEDS):
             a = sp.cover[n]
             if ease < 1:
@@ -454,9 +478,12 @@ class Ripples:
             if a <= 0:
                 continue
             c = col
-            if shine > 0:
-                w = BLOOD["shine"] * shine * math.exp(-((dist / (0.45 * sp.r0)) ** 2))
-                c = tuple(v + (g - v) * w for v, g in zip(col, gloss))
+            if shine > 0 and self.sheen == "glow":
+                w = GLOW["amount"] * shine * math.exp(-((dist / (0.45 * sp.r0)) ** 2))
+                c = tuple(v + (g - v) * w for v, g in zip(col, glow))
+            elif shine > 0 and n in d.glints:
+                w = SPEC["amount"] * shine * d.glints[n] * sp.cover[n]
+                c = tuple(v + (g - v) * w for v, g in zip(col, SPEC["white"]))
             p = px[j][i]
             for k in range(3):
                 p[k] = c[k] * a + p[k] * (1 - a)
@@ -516,29 +543,13 @@ def power_scale(frame, level, max_amps):
     return max(0.0, (max_amps - idle) / (amps - idle))
 
 
-def encode(frame, level, layout, carry=None):
-    """Frame -> GRB byte buffer in data-chain order. With `carry` (a list of N*N*3 floats
-    kept between frames), each channel is temporally dithered: the fraction it couldn't
-    show is carried into the next frame, so a level of 1.4 shows as 1, 2, 1, 1, 2 ..."""
+def encode(frame, level, layout):
+    """Frame -> GRB byte buffer in data-chain order."""
     buf = bytearray(N * N * 3)
     for y in range(N):
         for x in range(N):
             i = 3 * xy_to_index(x, y, layout)
-            rgb = []
-            for k, c in enumerate(frame[y][x]):
-                v = min(255.0, c) * level
-                if carry is None:
-                    rgb.append(int(round(v)))
-                    continue
-                if v < DITHER_FLOOR:           # sparser than every other frame would visibly blink
-                    carry[i + k] = 0.0
-                    rgb.append(0)
-                    continue
-                v += carry[i + k]
-                q = min(255, max(0, int(v + 0.5)))
-                carry[i + k] = v - q
-                rgb.append(q)
-            r, g, b = rgb
+            r, g, b = (int(round(min(255.0, c) * level)) for c in frame[y][x])
             buf[i], buf[i + 1], buf[i + 2] = g, r, b
     return buf
 
@@ -547,8 +558,7 @@ def encode(frame, level, layout, carry=None):
 class Panel:
     """The real panel on a Pi 5 GPIO pin, via Adafruit's PIO driver."""
 
-    def __init__(self, gpio, dither=True):
-        self.carry = [0.0] * (N * N * 3) if dither else None
+    def __init__(self, gpio):
         try:
             from adafruit_raspberry_pi5_neopixel_write import neopixel_write
         except ImportError:
@@ -558,7 +568,7 @@ class Panel:
         self.id = gpio           # the driver reads the BCM GPIO number from .id
 
     def show(self, frame, level, layout):
-        self._write(self, encode(frame, level, layout, self.carry))
+        self._write(self, encode(frame, level, layout))
 
     def off(self):
         self._write(self, bytearray(N * N * 3))
@@ -597,6 +607,39 @@ def log(msg, out):
     print(msg, file=sys.stderr if isinstance(out, TerminalPreview) else sys.stdout, flush=True)
 
 
+class Keys:
+    """Single key presses from the terminal, without waiting for Enter (--listen)."""
+
+    def __init__(self):
+        import termios
+        import tty
+        if not sys.stdin.isatty():
+            sys.exit("--listen needs a terminal to read the space bar from")
+        self._termios, self._fd = termios, sys.stdin.fileno()
+        self._saved = termios.tcgetattr(self._fd)
+        tty.setcbreak(self._fd)
+
+    def read(self):
+        """Keys pressed since the last call."""
+        import select
+        keys = ""
+        while select.select([sys.stdin], [], [], 0)[0]:
+            keys += sys.stdin.read(1)
+        return keys
+
+    def close(self):
+        self._termios.tcsetattr(self._fd, self._termios.TCSADRAIN, self._saved)
+
+
+def rare_energy(rng):
+    """A muon energy above the rare threshold (for --listen's r key)."""
+    for _ in range(10000):
+        e = muon_energy(rng)
+        if e > HOT:
+            return e
+    return 1.5 * HOT
+
+
 def main():
     p = argparse.ArgumentParser(description="Muon-ripple opacity test for a 16x16 NeoPixel panel on a Pi 5.")
     p.add_argument("--rate", type=float, default=0.4,
@@ -608,11 +651,14 @@ def main():
                         "pumpkin = orange jack-o'-lanterns; pumpkin-warm, "
                         "pumpkin-cool, pumpkin-pride = jack-o'-lanterns in that scheme's colours; "
                         "soccer = soccer balls")
+    p.add_argument("--sheen", choices=SHEENS, default="glow",
+                   help="bloody: how a wet splat catches the light: none; glow = its centre goes a "
+                        "hotter red (default); spec = one or two LEDs go white for the cover to blend")
+    p.add_argument("--listen", action="store_true",
+                   help="drop nothing on its own: space drops a muon, r a rare one")
     p.add_argument("--brightness", type=float, default=1.0, help="brightness 0..1 (default 1.0)")
-    p.add_argument("--splat-land", type=float, default=BLOOD["land"],
-                   help="bloody: seconds for a splat to spread to full size (default %(default)s; the page uses 0.18)")
-    p.add_argument("--splat-level", type=float, default=BLOOD["level"],
-                   help="bloody: splat colours as a share of the page's, 0..1 (default %(default)s)")
+    p.add_argument("--fps", type=float, default=FPS,
+                   help=f"frames per second (default {FPS}; the panel can take about {PANEL_MAX_FPS})")
     p.add_argument("--duration", type=float, default=0, help="stop after this many seconds (default 0 = run until Ctrl+C)")
     p.add_argument("--pin", type=int, default=18, help="BCM GPIO number of the data line (default 18 = header pin 12)")
     p.add_argument("--max-amps", type=float, default=3.5,
@@ -620,8 +666,6 @@ def main():
     p.add_argument("--layout", choices=["serpentine", "progressive"], default="serpentine",
                    help="data-chain wiring of the matrix (default serpentine, as on Adafruit's 16x16)")
     p.add_argument("--seed", type=int, default=None, help="random seed, to repeat the same run of drops")
-    p.add_argument("--no-dither", action="store_true",
-                   help="round each frame's levels instead of dithering them (to compare slow fades)")
     p.add_argument("--preview", action="store_true", help="draw in the terminal instead of driving the panel")
     args = p.parse_args()
 
@@ -629,51 +673,63 @@ def main():
         p.error("--rate must be positive")
     if not 0 < args.brightness <= 1:
         p.error("--brightness must be above 0 and at most 1")
+    if not 1 <= args.fps <= 1000:
+        p.error("--fps must be between 1 and 1000")
     if args.duration < 0:
         p.error("--duration can't be negative")
-    if not 0 < args.splat_land < BLOOD_TOTAL:
-        p.error(f"--splat-land must be above 0 and under {BLOOD_TOTAL} s")
-    if not 0 < args.splat_level <= 1:
-        p.error("--splat-level must be above 0 and at most 1")
-    BLOOD["land"], BLOOD["level"] = args.splat_land, args.splat_level
-    BLOOD["wet"] = max(0.45, args.splat_land)             # fresh until it has landed
-    BLOOD["dry"] = BLOOD_TOTAL - BLOOD["wet"]
     if args.max_amps <= N * N * MA_IDLE_PER_LED / 1000.0:
         p.error(f"--max-amps must be above the panel's idle draw ({N * N * MA_IDLE_PER_LED / 1000.0:.2f} A)")
 
     rng = random.Random(args.seed)
-    out = TerminalPreview() if args.preview else Panel(args.pin, dither=not args.no_dither)
-    field = Ripples(rng, args.brightness, args.max_amps)
+    out = TerminalPreview() if args.preview else Panel(args.pin)
+    field = Ripples(rng, args.brightness, args.max_amps, args.sheen)
+    keys = Keys() if args.listen else None
+    if args.fps > PANEL_MAX_FPS:
+        log(f"note: the panel takes about {1000 / PANEL_MAX_FPS:.0f} ms per frame, so above "
+            f"{PANEL_MAX_FPS} fps frames will come out slower than asked", out)
+    if keys:
+        log("listening: space = drop a muon, r = a rare one, Ctrl+C = quit", out)
 
     # systemd / kill send SIGTERM; turn it into the same clean exit as Ctrl+C.
     def stop(signum, _frame):
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, stop)
 
+    count = stripe = 0
+
+    def drop_one(now, energy):
+        nonlocal count, stripe
+        if args.scheme == "rotate":
+            scheme = SCHEME_ORDER[count % len(SCHEME_ORDER)]
+        else:
+            scheme = args.scheme
+        drop = Drop(now, scheme, energy, stripe % len(PRIDE))
+        if scheme in ("pride", "pumpkin-pride"):
+            stripe += 1
+        field.add(drop)
+        count += 1
+        kind = "" if scheme in ("pumpkin", "soccer") else ("rare" if drop.hot else "typical")
+        fit = f" | fitted to {drop.fit:.0%} for the power limit" if drop.fit < 1 else ""
+        bright = "" if drop.splat else f" | brightness x{drop.amp:.2f}"   # a splat's colour is fixed
+        log(f"drop {count:4d} | {scheme:13s} | {kind:7s} | {drop.e:5.1f} MeV{bright}{fit}", out)
+
+    start = time.monotonic()
+    frames = 0
     try:
-        start = time.monotonic()
-        frames = 0
         next_drop = start            # the first drop lands straight away
-        count, stripe, last_limit_log = 0, 0, -1.0
+        last_limit_log = -1.0
         while True:
             now = time.monotonic()
             if args.duration and now - start >= args.duration:
                 break
-            if now >= next_drop:
-                if args.scheme == "rotate":
-                    scheme = SCHEME_ORDER[count % len(SCHEME_ORDER)]
-                else:
-                    scheme = args.scheme
-                drop = Drop(now, scheme, muon_energy(rng), stripe % len(PRIDE))
-                if scheme in ("pride", "pumpkin-pride"):
-                    stripe += 1
-                field.add(drop)
-                count += 1
-                kind = "" if scheme in ("pumpkin", "soccer") else ("rare" if drop.hot else "typical")
-                fit = f" | fitted to {drop.fit:.0%} for the power limit" if drop.fit < 1 else ""
-                bright = "" if drop.splat else f" | brightness x{drop.amp:.2f}"   # a splat's colour is fixed
-                log(f"drop {count:4d} | {scheme:13s} | {kind:7s} | "
-                    f"{drop.e:5.1f} MeV{bright}{fit}", out)
+            if keys:
+                for k in keys.read():
+                    if k == " ":
+                        drop_one(now, muon_energy(rng))
+                    elif k in "rR":
+                        drop_one(now, rare_energy(rng))
+            elif now >= next_drop:
+                drop_one(now, muon_energy(rng))
                 next_drop = now + rng.expovariate(args.rate)
             frame = field.frame(now)
             level = args.brightness * power_scale(frame, args.brightness, args.max_amps)
@@ -683,10 +739,12 @@ def main():
                 last_limit_log = now
             out.show(frame, level, args.layout)
             frames += 1
-            time.sleep(max(0.0, 1.0 / FPS - (time.monotonic() - now)))
+            time.sleep(max(0.0, 1.0 / args.fps - (time.monotonic() - now)))
     except KeyboardInterrupt:
         pass
     finally:
+        if keys:
+            keys.close()
         try:
             out.off()
             ran = time.monotonic() - start

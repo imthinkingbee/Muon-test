@@ -48,13 +48,17 @@ lumpy blob with tapering spikes, droplets at some spike tips and a few stray sat
 seeded from the drop so each one is its own shape.
 
 - It lands as the ripple's 8 mm impact circle and spreads to the full splatter in 0.18 s,
-  fast at first and then settling. The wet centre glistens a hotter red for about the first
-  second.
-- It stays fresh red for 0.45 s, then dries through rust to black in one smooth curve with
-  no hold, 3.75 s in all.
+  fast at first and then settling.
+- It stays fresh red for 0.45 s, then dries through dark red to black in one smooth curve
+  with no hold, 3.75 s in all.
 - Its colours run at 0.7 of the page's: a solid splat reads much brighter than a thin ring.
-  Tune on the panel with `--splat-level 0.6` (0..1) and `--splat-land 0.25` (seconds to
-  spread).
+- While it's wet, for about its first 0.85 s, it catches the light. `--sheen` picks how:
+  - `glow` (default): its centre goes part way to a hotter red.
+  - `spec`: a specular glint. The LED where a light up and to the north-west would catch
+    the splat, about a third of its radius from the impact, goes most of the way to white,
+    and the cover blends it into a highlight on the red. If the glint falls between two
+    LEDs it's shared between them.
+  - `none`: no sheen.
 - Newer splats land on top of older ones, covering them where they overlap.
 - Rare drops (over 15.5 MeV) splat bigger.
 - Splats are mostly red, so they draw well under 1.5 A even at 1.7 drops/s.
@@ -234,11 +238,11 @@ drop    3 | pride         | rare    |  17.2 MeV | brightness x1.60
 | `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn. `warm`, `cool` or `pride` = only that scheme's ripples. `bloody` = splats that dry to black. `pumpkin` = orange jack-o'-lanterns. `pumpkin-warm`, `pumpkin-cool`, `pumpkin-pride` = jack-o'-lanterns in that scheme's colours. `soccer` = soccer balls. |
 | `--rate R` | `0.4` | average drops per second, at random times. `1.7` = sea level. |
 | `--brightness B` | `1.0` | overall brightness from 0 to 1 (e.g. `0.25`) |
-| `--splat-land S` | `0.18` | `bloody`: seconds for a splat to spread to full size |
-| `--splat-level L` | `0.7` | `bloody`: splat colours as a share of the page's, 0 to 1 |
+| `--sheen S` | `glow` | `bloody`: how a wet splat catches the light: `none`, `glow` or `spec` (see above) |
+| `--listen` | off | drop nothing on its own: each press of the space bar drops a muon, `r` drops a rare one. For watching one drop at a time. |
+| `--fps F` | `60` | frames per second. The panel can take about 125. |
 | `--duration S` | `0` | stop after *S* seconds (`0` = run until Ctrl+C) |
 | `--seed N` | random | repeat exactly the same run of drops (handy for comparing two covers) |
-| `--no-dither` | off | round each frame's levels instead of dithering them, to compare slow fades near black |
 | `--max-amps A` | `3.5` | panel current limit (see below) |
 | `--pin N` | `18` | BCM GPIO number of the data line |
 | `--layout` | `serpentine` | `progressive` if your panel's rows all run the same way |
@@ -250,6 +254,7 @@ Examples:
 python3 ring_test.py --rate 1.7             # real sea-level muon rate
 python3 ring_test.py --scheme cool          # only cool ripples (also: warm, pride)
 python3 ring_test.py --scheme bloody        # splats that dry to black
+python3 ring_test.py --scheme bloody --listen --sheen spec   # one splat per space bar press
 python3 ring_test.py --scheme pumpkin       # jack-o'-lanterns 🎃
 python3 ring_test.py --scheme pumpkin-pride # rainbow jack-o'-lanterns, with sparkles
 python3 ring_test.py --scheme soccer        # soccer balls ⚽
@@ -280,16 +285,14 @@ If you use a bigger supply, raise `--max-amps` to about 90 % of its rating.
 - The ripples land between the four middle LEDs and spread symmetrically, so they look the
   same whichever corner the data enters and whichever way the rows run. (In the artifact, a
   drop lands wherever the muon hit. Here every drop lands in the centre.)
-- Frames are sent at about 60 per second, as on the Muon Ripple board, and each one takes a
-  few milliseconds to work out. A splat's shape is worked out once as it lands, which takes a
-  few milliseconds more.
+- Frames are sent at 60 per second by default, as on the Muon Ripple board (`--fps`), and
+  each one takes a few milliseconds to work out. A splat's shape is worked out once as it
+  lands, which takes a few milliseconds more.
 - `--preview` undoes the gamma, so the terminal shows the panel as it looks, not its raw
-  drive levels. It doesn't dither.
+  drive levels.
 - On exit the script logs how many frames it sent and the rate it achieved. The panel itself
-  could take about 125 frames a second: 256 LEDs × 24 bits at 800 kbit/s is 7.7 ms, plus the
+  can take about 125 frames a second: 256 LEDs × 24 bits at 800 kbit/s is 7.7 ms, plus the
   0.3 ms latch.
-- Each LED has only 256 levels per colour, and with the gamma the bottom few are far apart,
-  so a slow fade near black would step visibly. The script dithers in time to hide that.
 - Adafruit's Pi 5 NeoPixel examples use `byteorder="BGR"`. The driver sends bytes in buffer
   order, so for standard GRB NeoPixels that swaps red and blue. Their rainbow demos hide it.
   This script writes GRB directly.
