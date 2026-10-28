@@ -47,18 +47,10 @@ The artifact's fourth scheme. Every drop **splats** where it lands instead of ri
 lumpy blob with tapering spikes, droplets at some spike tips and a few stray satellites,
 seeded from the drop so each one is its own shape.
 
-- It's drawn in two colours, then projected onto the 16×16 grid: each LED shows the
-  area-weighted mix of what falls in its 10 mm cell, in actual light. The **body** is pure
-  red at drive 31. The **highlight**, the brightest colour, is pure red at drive 102: a small
-  disc where a light up and to the north-west would catch the wet surface. Anything on the
-  panel between the two is that blending, or the splat's partial coverage of a cell.
-- **Fresh:** it lands as the ripple's 8 mm impact circle and spreads to the full splatter
-  in 0.18 s, fast at first and then settling, then holds until 0.45 s.
-- **Fading (from 0.45 s):** the whole splat fades out together the way the ripples do, an
-  exponential decay on its display brightness, with the ripples' own time constant, through
-  the same gamma; gone by about 2.2 s.
-- It's pure red: the page's colours carry a touch of green and blue, which on the LEDs
-  rounds to level 1 of 255 and shows in a dim room as a pink tint.
+- It lands as the ripple's 8 mm impact circle and spreads to the full splatter in 0.18 s,
+  fast at first and then settling. The wet centre glistens for about the first second.
+- It stays fresh red for 0.45 s, then dries through dark red to black over 3.3 s, in one
+  smooth curve with no hold.
 - Newer splats land on top of older ones, covering them where they overlap.
 - Rare drops (over 15.5 MeV) splat bigger.
 - Splats are mostly red, so they draw well under 1.5 A even at 1.7 drops/s.
@@ -235,12 +227,9 @@ drop    3 | pride         | rare    |  17.2 MeV | brightness x1.60
 
 | Option | Default | What it does |
 |---|---|---|
-| `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn. `warm`, `cool` or `pride` = only that scheme's ripples. `bloody` = blood splats that fade to black. `pumpkin` = orange jack-o'-lanterns. `pumpkin-warm`, `pumpkin-cool`, `pumpkin-pride` = jack-o'-lanterns in that scheme's colours. `soccer` = soccer balls. |
+| `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn. `warm`, `cool` or `pride` = only that scheme's ripples. `bloody` = splats that dry to black. `pumpkin` = orange jack-o'-lanterns. `pumpkin-warm`, `pumpkin-cool`, `pumpkin-pride` = jack-o'-lanterns in that scheme's colours. `soccer` = soccer balls. |
 | `--rate R` | `0.4` | average drops per second, at random times. `1.7` = sea level. |
 | `--brightness B` | `1.0` | overall brightness from 0 to 1 (e.g. `0.25`) |
-| `--listen` | off | drop nothing on its own: each press of the space bar drops a muon, `r` drops a rare one. For watching one drop at a time. |
-| `--fps F` | `60` | frames per second. The panel can take about 125; the exit log shows what the Pi managed. |
-| `--gamma-test [COLOUR]` | off | a still test pattern for the gamma curve (see below). COLOUR: `red` (default), `green`, `blue`, `white` |
 | `--duration S` | `0` | stop after *S* seconds (`0` = run until Ctrl+C) |
 | `--seed N` | random | repeat exactly the same run of drops (handy for comparing two covers) |
 | `--max-amps A` | `3.5` | panel current limit (see below) |
@@ -253,8 +242,7 @@ Examples:
 ```bash
 python3 ring_test.py --rate 1.7             # real sea-level muon rate
 python3 ring_test.py --scheme cool          # only cool ripples (also: warm, pride)
-python3 ring_test.py --scheme bloody        # blood splats that fade to black
-python3 ring_test.py --scheme bloody --listen   # one splat per space bar press
+python3 ring_test.py --scheme bloody        # splats that dry to black
 python3 ring_test.py --scheme pumpkin       # jack-o'-lanterns 🎃
 python3 ring_test.py --scheme pumpkin-pride # rainbow jack-o'-lanterns, with sparkles
 python3 ring_test.py --scheme soccer        # soccer balls ⚽
@@ -262,23 +250,6 @@ python3 ring_test.py --brightness 0.25      # dimmer, to see when light stops ge
 python3 ring_test.py --seed 42              # same drops every time: swap covers and compare
 python3 ring_test.py --preview              # try it out without the panel
 ```
-
-### Gamma test
-
-```bash
-python3 ring_test.py --gamma-test          # or --gamma-test white
-```
-
-A still pattern of two snakes, each running along a row, down one, back along the next and
-so on, with a blank row between lit rows (the turns light the blank rows' end LEDs). Each
-fades from 100 % at its head (top left) to 0 at its tail:
-
-- **Top snake:** straight in drive levels, 255 down to 0 evenly.
-- **Bottom snake:** through the gamma curve the animations use (2.2), which should look
-  evenly graded from head to tail if the curve suits the panel and cover. Its last few
-  LEDs come out below level 1 and show as off.
-
-`--brightness` scales both, as it does the animations.
 
 ### Brightness and the power limit
 
@@ -302,14 +273,11 @@ If you use a bigger supply, raise `--max-amps` to about 90 % of its rating.
 - The ripples land between the four middle LEDs and spread symmetrically, so they look the
   same whichever corner the data enters and whichever way the rows run. (In the artifact, a
   drop lands wherever the muon hit. Here every drop lands in the centre.)
-- Frames are sent at 60 per second by default (`--fps`), and
-  each one takes a few milliseconds to work out. A splat's shape is worked out once as it
-  lands, which takes a few milliseconds more.
+- Frames are sent at about 60 per second, as on the Muon Ripple board, and each one takes a
+  few milliseconds to work out. A splat's shape is worked out once as it lands, which takes a
+  few milliseconds more.
 - `--preview` undoes the gamma, so the terminal shows the panel as it looks, not its raw
   drive levels.
-- On exit the script logs how many frames it sent and the rate it achieved. The panel itself
-  can take about 125 frames a second: 256 LEDs × 24 bits at 800 kbit/s is 7.7 ms, plus the
-  0.3 ms latch.
 - Adafruit's Pi 5 NeoPixel examples use `byteorder="BGR"`. The driver sends bytes in buffer
   order, so for standard GRB NeoPixels that swaps red and blue. Their rainbow demos hide it.
   This script writes GRB directly.
