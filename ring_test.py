@@ -27,7 +27,7 @@ The colour scheme changes on every drop, warm -> cool -> pride -> warm ...
 lands (a seeded, lumpy splat with spikes and droplets), spreading from the ripple's
 8 mm impact circle in 0.18 s. It's drawn in two colours, a body at drive 31 and a small
 highlight at drive 102, and projected onto the grid by area. It holds until 0.45 s, then
-fades out as a whole on one smooth curve, gone by 3.05 s. Pure red. Newer splats land on
+fades out as a whole on a quadratic ease-in, fastest at the end, gone by 3.05 s. Pure red. Newer splats land on
 top of older ones; rare drops splat bigger.
 
 Colours, fades and glitter are worked out in display units and turned into LED drive
@@ -106,9 +106,9 @@ GLITTER = {"rate": 1.5, "wake": 0.08, "rise": 0.03, "tau": 0.15, "life": 0.45, "
 #   highlight  pure red at drive 102, the brightest colour: a small disc a light up and to
 #              the north-west would catch on the wet surface
 # It lands as the ripple's impact circle and spreads to the full splatter on an ease-out
-# (0.18 s), holds until 0.45 s, then the whole splat fades out together, by 3.05 s, on one
-# smooth curve that eases out of the hold and eases into black (a smoothstep on perceived
-# brightness).
+# (0.18 s), holds until 0.45 s, then the whole splat fades out together by 3.05 s, on a
+# quadratic ease-in on its light (drive levels): gentle out of the hold, fastest at the end,
+# so the last levels go by quickly.
 # On the panel the splat is pure red: any green or blue rounds to level 1 on the LEDs and
 # reads pink in a dim room.
 BLOOD = {"highlight": 102.0, "body": 31.0,   # drive levels, before projection
@@ -123,8 +123,7 @@ BLOOD_END = BLOOD["wet"] + BLOOD["fade"]
 def blood_fade(t):
     """Drive multiplier for the whole splat t s after landing: 1 while fresh, then to 0."""
     y = clamp((t - BLOOD["wet"]) / BLOOD["fade"], 0.0, 1.0)
-    q = 1 - y * y * (3 - 2 * y)                                  # perceived: smoothstep down
-    return q ** GAMMA
+    return 1 - y * y                                             # ease-in on the light: fastest at the end
 
 
 # ---- shapes: pumpkins and the soccer ball --------------------------------------------
@@ -235,21 +234,9 @@ def clamp(v, lo, hi):
     return lo if v < lo else hi if v > hi else v
 
 
-# Level 1 is the LED's dimmest and still shows through the cover, so the curve starts there:
-# anything meant to be lit, however faint, gets at least level 1, with the curve spread over
-# levels 1 to 255 above it. Only values below DARK (display units) are black.
-DARK = 1.0
-DARK_DRIVE = 255.0 * (DARK / 255.0) ** GAMMA
-
-
-def lift(d):
-    """Drive level from the plain gamma curve -> drive level starting at the LED's level 1."""
-    return 0.0 if d < DARK_DRIVE else 1.0 + d * 254.0 / 255.0
-
-
 def to_drive(v):
     """Display units (0..255, as the simulation page draws) -> LED drive level (0..255)."""
-    return lift(255.0 * clamp(v / 255.0, 0.0, 1.0) ** GAMMA)
+    return 255.0 * clamp(v / 255.0, 0.0, 1.0) ** GAMMA
 
 
 def mulberry32(a):
@@ -498,7 +485,7 @@ class Ripples:
             share = min(1.0, sp.spot[n] / sp.cover[n]) if sp.cover[n] > 0 else 0.0
             drive = (body + (hi - body) * share) * m
             p = px[j][i]
-            p[0] = lift(drive * a) + p[0] * (1 - a)       # pure red; faint cells still at least level 1
+            p[0] = drive * a + p[0] * (1 - a)             # pure red
             p[1] *= 1 - a
             p[2] *= 1 - a
 

@@ -54,8 +54,8 @@ seeded from the drop so each one is its own shape.
   panel between the two is that blending, or the splat's partial coverage of a cell.
 - **Fresh:** it lands as the ripple's 8 mm impact circle and spreads to the full splatter
   in 0.18 s, fast at first and then settling, then holds until 0.45 s.
-- **Fading (0.45–3.05 s):** the whole splat fades out together on one smooth curve: a
-  slight ease-in from the hold, then a gentle arc to black.
+- **Fading (0.45–3.05 s):** the whole splat fades out together on a quadratic ease-in on its
+  light: gentle out of the hold and fastest at the end, so the last levels go by quickly.
 - It's pure red: the page's colours carry a touch of green and blue, which on the LEDs
   rounds to level 1 of 255 and shows in a dim room as a pink tint.
 - Newer splats land on top of older ones, covering them where they overlap.
@@ -274,9 +274,8 @@ fades from 100 % at its head (top left) to 0 at its tail:
 
 - **Top snake:** straight in drive levels, 255 down to 0 evenly.
 - **Bottom snake:** through the gamma curve the animations use (2.2), which should look
-  evenly graded from head to tail if the curve suits the panel and cover. The curve starts
-  at level 1, the LED's dimmest, which still shows through the cover: anything meant to be
-  lit gets at least level 1, and only the tail's last LED, at 0, is off.
+  evenly graded from head to tail if the curve suits the panel and cover. Its last few
+  LEDs come out below level 1 and show as off.
 
 `--brightness` scales both, as it does the animations.
 
