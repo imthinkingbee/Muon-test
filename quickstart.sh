@@ -114,14 +114,14 @@ if [[ ! -x $VENV/bin/python ]]; then
     python3 -m venv "$VENV"
     ok "created $VENV"
 fi
-if "$VENV/bin/python" -c 'import adafruit_raspberry_pi5_neopixel_write' 2>/dev/null; then
-    ok "LED driver already installed"
+if "$VENV/bin/python" -c 'import adafruit_raspberry_pi5_neopixel_write, gpiod' 2>/dev/null; then
+    ok "LED and GPIO libraries already installed"
 else
     "$VENV/bin/python" -m pip install -r requirements.txt \
-        || die "pip couldn't install the LED driver. Check the Pi's internet connection and try again."
-    "$VENV/bin/python" -c 'import adafruit_raspberry_pi5_neopixel_write' \
-        || die "The LED driver installed but won't import. See the pip output above."
-    ok "LED driver installed"
+        || die "pip couldn't install the LED and GPIO libraries. Check the Pi's internet connection and try again."
+    "$VENV/bin/python" -c 'import adafruit_raspberry_pi5_neopixel_write, gpiod' \
+        || die "The libraries installed but won't import. See the pip output above."
+    ok "LED and GPIO libraries installed"
 fi
 
 # ---- 6. run ----------------------------------------------------------------------

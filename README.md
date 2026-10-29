@@ -122,6 +122,41 @@ LED-for-LED on the grid with a one-LED white rim, so it stays round.
 A white ball lights all three colour channels on 174 LEDs, about 10 A at full brightness.
 So on a 4 A supply it's fitted to about 35 %, which is still bright white on the panel.
 
+### 🔭 Scope trigger: `--listen`
+
+```bash
+./quickstart.sh --listen --scheme cool
+```
+
+Nothing drops on its own. Each **rising edge** on **GPIO17** (header **pin 11**) drops one
+muon, so the panel shows exactly the events the oscilloscope triggers on. All the
+coincidence and thresholding happens on the scope; the Pi takes every edge as a drop, with
+no filtering or hold-off. The kernel timestamps the edges, so short trigger pulses between
+frames aren't missed, and several edges within one frame all drop.
+
+- Works with every scheme. Each drop still gets a simulated muon energy for its brightness
+  and colour.
+- Set the scope's trigger mode to **Normal**, not Auto. In Auto it triggers by itself when
+  nothing arrives, and every one of those becomes a drop.
+- The input is pulled down inside the Pi, so an unplugged lead doesn't drop muons.
+- `--trigger-pin N` uses another BCM GPIO.
+- With `--preview`, the space bar stands in for a trigger edge.
+
+**The Pi's inputs take 3.3 V at most.** A 0–5 V trigger out must go through a divider
+first. Don't connect it straight to the pin:
+
+```
+scope trigger out ──[ 10 kΩ ]──┬── GPIO17 (pin 11)
+                               │
+                            [ 20 kΩ ]
+                               │
+scope ground ──────────────────┴── Pi GND (pin 9)
+```
+
+5 V × 20 / (10 + 20) = 3.3 V. Any pair at about 1 : 2 works (e.g. 4.7 kΩ and 10 kΩ gives
+3.4 V). Keep them between about 1 kΩ and 50 kΩ. The Pi's own pull-down sits across the lower
+resistor and brings the high level down a little, to about 3 V: still a clean high.
+
 ## Hardware
 
 - Raspberry Pi 5
@@ -144,6 +179,9 @@ Adafruit's recommended extras for a reliable panel:
 
 Power the Pi from its own USB-C supply.
 
+For `--listen`, the scope's trigger out goes to **GPIO17**, header **pin 11**, through the
+divider above, and the scope's ground goes to a Pi GND (pin 9 is next to it).
+
 ## Quickstart
 
 On the Pi, as your normal user (not `sudo`):
@@ -162,7 +200,7 @@ asks before anything big, and uses `sudo` only for system changes.
 2. If `/dev/pio0` is missing, offers to update the OS, then asks you to reboot.
 3. If you can't use `/dev/pio0`, adds a udev rule (`/etc/udev/rules.d/99-muon-pio.rules`) and
    puts you in the `gpio` group. You may need one reboot after this.
-4. Creates the `.venv` virtual environment and installs the LED driver.
+4. Creates the `.venv` virtual environment and installs the LED driver and `gpiod`.
 5. Runs `ring_test.py`.
 
 If it stops and says reboot, reboot and run `./quickstart.sh` again.
@@ -228,13 +266,15 @@ drop    3 | pride         | rare    |  17.2 MeV | brightness x1.60
 | Option | Default | What it does |
 |---|---|---|
 | `--scheme S` | `rotate` | `rotate` = warm, cool, pride in turn. `warm`, `cool` or `pride` = only that scheme's ripples. `bloody` = splats that dry to black. `pumpkin` = orange jack-o'-lanterns. `pumpkin-warm`, `pumpkin-cool`, `pumpkin-pride` = jack-o'-lanterns in that scheme's colours. `soccer` = soccer balls. |
-| `--rate R` | `0.4` | average drops per second, at random times. `1.7` = sea level. |
+| `--rate R` | `0.4` | average drops per second, at random times. `1.7` = sea level. Ignored with `--listen`. |
 | `--brightness B` | `1.0` | overall brightness from 0 to 1 (e.g. `0.25`) |
 | `--duration S` | `0` | stop after *S* seconds (`0` = run until Ctrl+C) |
 | `--seed N` | random | repeat exactly the same run of drops (handy for comparing two covers) |
 | `--max-amps A` | `3.5` | panel current limit (see below) |
 | `--pin N` | `18` | BCM GPIO number of the data line |
 | `--layout` | `serpentine` | `progressive` if your panel's rows all run the same way |
+| `--listen` | off | drop a muon on each rising edge on `--trigger-pin`, and none on their own (see above). With `--preview`, the space bar. |
+| `--trigger-pin N` | `17` | BCM GPIO number of the `--listen` input (3.3 V max) |
 | `--preview` | off | draw the panel in the terminal instead of driving LEDs. Works on any computer. |
 
 Examples:
@@ -249,6 +289,7 @@ python3 ring_test.py --scheme soccer        # soccer balls ⚽
 python3 ring_test.py --brightness 0.25      # dimmer, to see when light stops getting through
 python3 ring_test.py --seed 42              # same drops every time: swap covers and compare
 python3 ring_test.py --preview              # try it out without the panel
+python3 ring_test.py --listen               # one drop per scope trigger on GPIO17
 ```
 
 ### Brightness and the power limit

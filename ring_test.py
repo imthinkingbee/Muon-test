@@ -44,13 +44,19 @@ Hardware: Raspberry Pi 5, data on GPIO18 (header pin 12) by default, panel on
 its own 5 V supply. Drives the LEDs with Adafruit's Pi 5 PIO driver
 (pip install Adafruit-Blinka-Raspberry-Pi5-Neopixel). See README.md.
 
+--listen drops nothing on its own: each rising edge on GPIO17 (header pin 11) drops one
+muon, e.g. from an oscilloscope's trigger out. The input is 3.3 V only, so a 5 V signal
+needs a divider first (see README.md). With --preview, the space bar stands in for an edge.
+
 Run `python3 ring_test.py --preview` on any computer to see the ripples in
 the terminal without a panel attached.
 """
 
 import argparse
+import glob
 import math
 import random
+import select
 import signal
 import struct
 import sys
@@ -563,6 +569,63 @@ class TerminalPreview:
         self.drawn = False
 
 
+class Trigger:
+    """Rising edges on a Pi 5 GPIO input (--listen), counted by the kernel so none are missed."""
+
+    def __init__(self, gpio):
+        try:
+            import gpiod
+            from gpiod.line import Bias, Direction, Edge
+        except ImportError:
+            sys.exit("Missing the GPIO library for --listen: pip install gpiod (see README.md)")
+        # The header's chip is gpiochip0 or gpiochip4 depending on the kernel, so find it by line name.
+        for path in sorted(glob.glob("/dev/gpiochip*")):
+            try:
+                with gpiod.Chip(path) as chip:
+                    offset = chip.line_offset_from_id(f"GPIO{gpio}")
+            except (OSError, ValueError):
+                continue
+            # Pulled down, so an unplugged input sits low instead of floating into false drops.
+            settings = gpiod.LineSettings(direction=Direction.INPUT, edge_detection=Edge.RISING,
+                                          bias=Bias.PULL_DOWN)
+            self._req = gpiod.request_lines(path, consumer="muon-test", config={offset: settings})
+            return
+        sys.exit(f"Couldn't find GPIO{gpio} on any /dev/gpiochip*: is this a Pi 5, and are you in the 'gpio' group?")
+
+    def count(self):
+        """Rising edges since the last call."""
+        n = 0
+        while self._req.wait_edge_events(0):
+            n += len(self._req.read_edge_events())
+        return n
+
+    def close(self):
+        self._req.release()
+
+
+class Keys:
+    """Space-bar presses from the terminal, standing in for trigger edges (--listen --preview)."""
+
+    def __init__(self):
+        import termios
+        import tty
+        if not sys.stdin.isatty():
+            sys.exit("--listen --preview needs a terminal to read the space bar from")
+        self._termios, self._fd = termios, sys.stdin.fileno()
+        self._saved = termios.tcgetattr(self._fd)
+        tty.setcbreak(self._fd)
+
+    def count(self):
+        """Space-bar presses since the last call."""
+        n = 0
+        while select.select([sys.stdin], [], [], 0)[0]:
+            n += sys.stdin.read(1) == " "
+        return n
+
+    def close(self):
+        self._termios.tcsetattr(self._fd, self._termios.TCSADRAIN, self._saved)
+
+
 def log(msg, out):
     # In preview the panel is redrawn in place, so logs go to stderr to keep it tidy.
     print(msg, file=sys.stderr if isinstance(out, TerminalPreview) else sys.stdout, flush=True)
@@ -588,6 +651,11 @@ def main():
                    help="data-chain wiring of the matrix (default serpentine, as on Adafruit's 16x16)")
     p.add_argument("--seed", type=int, default=None, help="random seed, to repeat the same run of drops")
     p.add_argument("--preview", action="store_true", help="draw in the terminal instead of driving the panel")
+    p.add_argument("--listen", action="store_true",
+                   help="drop nothing on its own: each rising edge on --trigger-pin drops a muon "
+                        "(with --preview, the space bar does)")
+    p.add_argument("--trigger-pin", type=int, default=17,
+                   help="BCM GPIO number of the --listen input (default 17 = header pin 11; 3.3 V max)")
     args = p.parse_args()
 
     if args.rate <= 0:
@@ -596,41 +664,57 @@ def main():
         p.error("--brightness must be above 0 and at most 1")
     if args.duration < 0:
         p.error("--duration can't be negative")
+    if args.listen and args.trigger_pin == args.pin:
+        p.error("--trigger-pin can't be the panel's data pin (--pin)")
     if args.max_amps <= N * N * MA_IDLE_PER_LED / 1000.0:
         p.error(f"--max-amps must be above the panel's idle draw ({N * N * MA_IDLE_PER_LED / 1000.0:.2f} A)")
 
     rng = random.Random(args.seed)
     out = TerminalPreview() if args.preview else Panel(args.pin)
     field = Ripples(rng, args.brightness, args.max_amps)
+    trigger = None
+    if args.listen:
+        trigger = Keys() if args.preview else Trigger(args.trigger_pin)
+        log("listening: space = a trigger edge, Ctrl+C = quit" if args.preview else
+            f"listening for rising edges on GPIO{args.trigger_pin}, Ctrl+C = quit", out)
 
     # systemd / kill send SIGTERM; turn it into the same clean exit as Ctrl+C.
     def stop(signum, _frame):
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, stop)
 
+    count, stripe = 0, 0
+
+    def land(now):
+        nonlocal count, stripe
+        if args.scheme == "rotate":
+            scheme = SCHEME_ORDER[count % len(SCHEME_ORDER)]
+        else:
+            scheme = args.scheme
+        drop = Drop(now, scheme, muon_energy(rng), stripe % len(PRIDE))
+        if scheme in ("pride", "pumpkin-pride"):
+            stripe += 1
+        field.add(drop)
+        count += 1
+        kind = "" if scheme in ("pumpkin", "soccer") else ("rare" if drop.hot else "typical")
+        fit = f" | fitted to {drop.fit:.0%} for the power limit" if drop.fit < 1 else ""
+        bright = "" if drop.splat else f" | brightness x{drop.amp:.2f}"   # a splat's colour is fixed
+        log(f"drop {count:4d} | {scheme:13s} | {kind:7s} | "
+            f"{drop.e:5.1f} MeV{bright}{fit}", out)
+
     try:
         start = time.monotonic()
         next_drop = start            # the first drop lands straight away
-        count, stripe, last_limit_log = 0, 0, -1.0
+        last_limit_log = -1.0
         while True:
             now = time.monotonic()
             if args.duration and now - start >= args.duration:
                 break
-            if now >= next_drop:
-                if args.scheme == "rotate":
-                    scheme = SCHEME_ORDER[count % len(SCHEME_ORDER)]
-                else:
-                    scheme = args.scheme
-                drop = Drop(now, scheme, muon_energy(rng), stripe % len(PRIDE))
-                if scheme in ("pride", "pumpkin-pride"):
-                    stripe += 1
-                field.add(drop)
-                count += 1
-                kind = "" if scheme in ("pumpkin", "soccer") else ("rare" if drop.hot else "typical")
-                fit = f" | fitted to {drop.fit:.0%} for the power limit" if drop.fit < 1 else ""
-                bright = "" if drop.splat else f" | brightness x{drop.amp:.2f}"   # a splat's colour is fixed
-                log(f"drop {count:4d} | {scheme:13s} | {kind:7s} | "
-                    f"{drop.e:5.1f} MeV{bright}{fit}", out)
+            if trigger:
+                for _ in range(trigger.count()):
+                    land(now)
+            elif now >= next_drop:
+                land(now)
                 next_drop = now + rng.expovariate(args.rate)
             frame = field.frame(now)
             level = args.brightness * power_scale(frame, args.brightness, args.max_amps)
@@ -643,6 +727,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        if trigger:
+            trigger.close()
         try:
             out.off()
             log("panel off", out)
