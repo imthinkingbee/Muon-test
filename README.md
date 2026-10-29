@@ -208,6 +208,32 @@ If it stops and says reboot, reboot and run `./quickstart.sh` again.
 Anything after `./quickstart.sh` is passed to the test, e.g. `./quickstart.sh --rate 1.7` or
 `./quickstart.sh --brightness 0.25`. Use `./quickstart.sh --setup-only` to set up without running.
 
+### Run it at every boot
+
+For a Pi with no monitor, install the demo as a boot service. Give it the same options you'd
+give `./quickstart.sh`:
+
+```bash
+./quickstart.sh --install-service --listen --scheme pride
+```
+
+This does the usual setup, then writes `/etc/systemd/system/muon-demo.service` and starts the
+test now and at every boot, as your user, with those options. If it crashes it restarts
+after 3 s. Nothing else on the Pi changes. Run it again with new options to change what
+plays at boot.
+
+| To | Run |
+|---|---|
+| watch the drop log | `journalctl -u muon-demo -f` |
+| stop it until the next boot | `sudo systemctl stop muon-demo` (blanks the panel) |
+| stop running it at boot | `./quickstart.sh --remove-service` |
+
+While the service is running, `./quickstart.sh` refuses to start a second copy that would
+fight it for the panel. Stop the service first.
+
+Before you unplug the Pi, run `sudo poweroff` over SSH and wait for the green LED to go out.
+Pulling the power while it runs usually works, but now and then it corrupts the SD card.
+
 ## Pi 5 setup by hand (what quickstart.sh does)
 
 The Pi 5 can't use the old `rpi_ws281x` NeoPixel driver. This script uses Adafruit's Pi 5

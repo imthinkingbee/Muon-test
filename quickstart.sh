@@ -4,6 +4,10 @@
 #   ./quickstart.sh                 set up anything missing, then run the test
 #   ./quickstart.sh --rate 1.7      anything after the script name goes to ring_test.py
 #   ./quickstart.sh --setup-only    set up, don't run
+#   ./quickstart.sh --install-service --listen --scheme pride
+#                                   set up, then run the test with these options at every boot
+#   ./quickstart.sh --remove-service
+#                                   stop running it at boot
 #
 # Safe to run again: each step is skipped once it's done. It asks before
 # anything big (OS upgrade, reboot) and uses sudo only for system changes.
@@ -15,6 +19,8 @@ cd "$(dirname "$(readlink -f "$0")")"
 VENV=.venv
 UDEV_RULE=/etc/udev/rules.d/99-muon-pio.rules
 PIO=/dev/pio0
+SERVICE=muon-demo
+UNIT=/etc/systemd/system/$SERVICE.service
 
 say()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 ok()   { printf '    ok: %s\n' "$*"; }
@@ -30,14 +36,28 @@ ask() {  # y/N question on the terminal; "no" when there's no terminal to ask on
     [[ $reply =~ ^[Yy]$ ]]
 }
 
-setup_only=0
-if [[ ${1:-} == --setup-only ]]; then
-    setup_only=1
-    shift
-fi
+mode=run
+case ${1:-} in
+    --setup-only)      mode=setup;   shift ;;
+    --install-service) mode=install; shift ;;
+    --remove-service)  mode=remove;  shift ;;
+esac
 
 if (( EUID == 0 )); then
     die "Run this as your normal user, not with sudo (it asks for sudo itself when needed)."
+fi
+
+if [[ $mode == remove ]]; then
+    say "Removing the $SERVICE boot service"
+    if [[ -f $UNIT ]]; then
+        sudo systemctl disable --now "$SERVICE"     # stopping it blanks the panel
+        sudo rm "$UNIT"
+        sudo systemctl daemon-reload
+        ok "removed; the test no longer starts at boot"
+    else
+        ok "not installed"
+    fi
+    exit 0
 fi
 
 # ---- 1. right hardware -----------------------------------------------------------
@@ -125,9 +145,57 @@ else
 fi
 
 # ---- 6. run ----------------------------------------------------------------------
-if (( setup_only )); then
+if [[ $mode == setup ]]; then
     say "Setup complete. Run the test with:  ./quickstart.sh"
     exit 0
+fi
+
+if [[ $mode == install ]]; then
+    say "Installing the $SERVICE boot service"
+    # systemd's own quoting: plain words as they are, anything else in double quotes.
+    args=""
+    for a in "$@"; do
+        a=${a//%/%%}
+        a=${a//\$/\$\$}
+        if [[ $a =~ ^[A-Za-z0-9._=:/+,%-]+$ ]]; then
+            args+=" $a"
+        else
+            a=${a//\\/\\\\}
+            args+=" \"${a//\"/\\\"}\""
+        fi
+    done
+    sudo tee "$UNIT" >/dev/null <<UNIT
+[Unit]
+Description=Muon demo on the LED panel (installed by $PWD/quickstart.sh)
+
+[Service]
+User=$(id -un)
+WorkingDirectory=$PWD
+ExecStart=$PWD/$VENV/bin/python ring_test.py$args
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    sudo systemctl daemon-reload
+    sudo systemctl enable "$SERVICE" >/dev/null 2>&1
+    sudo systemctl restart "$SERVICE"
+    sleep 3
+    if systemctl is-active --quiet "$SERVICE"; then
+        ok "running now, and at every boot:  ring_test.py$args"
+        echo "    Log:     journalctl -u $SERVICE -f"
+        echo "    Stop:    sudo systemctl stop $SERVICE   (it starts again at the next boot)"
+        echo "    Remove:  ./quickstart.sh --remove-service"
+    else
+        journalctl -u "$SERVICE" -n 20 --no-pager || true
+        die "The service didn't stay up; its log is above. Fix the options and run --install-service again."
+    fi
+    exit 0
+fi
+
+if systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
+    die "The $SERVICE boot service is already driving the panel. Stop it first:  sudo systemctl stop $SERVICE"
 fi
 
 say "Starting the ring test (Ctrl+C to stop and turn the panel off)"
