@@ -8,6 +8,10 @@
 #                                   set up, then run the test with these options at every boot
 #   ./quickstart.sh --remove-service
 #                                   stop running it at boot
+#   ./quickstart.sh --emergency     the trigger isn't working: switch the boot service to
+#                                   simulated muons at random (extra options are added,
+#                                   e.g. --rate 1.7); without the service, run that way now
+#   ./quickstart.sh --emergency-off back to the real trigger
 #
 # Safe to run again: each step is skipped once it's done. It asks before
 # anything big (OS upgrade, reboot) and uses sudo only for system changes.
@@ -21,6 +25,8 @@ UDEV_RULE=/etc/udev/rules.d/99-muon-pio.rules
 PIO=/dev/pio0
 SERVICE=muon-demo
 UNIT=/etc/systemd/system/$SERVICE.service
+DROPIN_DIR=/etc/systemd/system/$SERVICE.service.d
+DROPIN=$DROPIN_DIR/emergency.conf
 
 say()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 ok()   { printf '    ok: %s\n' "$*"; }
@@ -41,7 +47,37 @@ case ${1:-} in
     --setup-only)      mode=setup;   shift ;;
     --install-service) mode=install; shift ;;
     --remove-service)  mode=remove;  shift ;;
+    --emergency)       mode=emergency;     shift ;;
+    --emergency-off)   mode=emergency_off; shift ;;
 esac
+
+systemd_args() {  # the arguments as one ExecStart string, in systemd's own quoting
+    local a out=""
+    for a in "$@"; do
+        a=${a//%/%%}
+        a=${a//\$/\$\$}
+        if [[ $a =~ ^[A-Za-z0-9._=:/+,%-]+$ ]]; then
+            out+=" $a"
+        else
+            a=${a//\\/\\\\}
+            out+=" \"${a//\"/\\\"}\""
+        fi
+    done
+    printf '%s' "$out"
+}
+
+restart_service() {  # restart the boot service and say whether it stayed up
+    sudo systemctl daemon-reload
+    sudo systemctl restart "$SERVICE"
+    sleep 3
+    if systemctl is-active --quiet "$SERVICE"; then
+        ok "$1"
+        echo "    Log:     journalctl -u $SERVICE -f"
+    else
+        journalctl -u "$SERVICE" -n 20 --no-pager || true
+        die "The service didn't stay up; its log is above."
+    fi
+}
 
 if (( EUID == 0 )); then
     die "Run this as your normal user, not with sudo (it asks for sudo itself when needed)."
@@ -52,12 +88,51 @@ if [[ $mode == remove ]]; then
     if [[ -f $UNIT ]]; then
         sudo systemctl disable --now "$SERVICE"     # stopping it blanks the panel
         sudo rm "$UNIT"
+        sudo rm -f "$DROPIN"
+        sudo rmdir "$DROPIN_DIR" 2>/dev/null || true
         sudo systemctl daemon-reload
         ok "removed; the test no longer starts at boot"
     else
         ok "not installed"
     fi
     exit 0
+fi
+
+# ---- emergency switch: simulated muons while the trigger is down -------------------
+if [[ $mode == emergency_off ]]; then
+    say "Switching the $SERVICE boot service back to the real trigger"
+    if [[ ! -f $DROPIN ]]; then
+        ok "emergency mode isn't on; nothing to do"
+        exit 0
+    fi
+    sudo rm "$DROPIN"
+    sudo rmdir "$DROPIN_DIR" 2>/dev/null || true
+    restart_service "back to the real trigger:  ring_test.py$(grep -m1 '^ExecStart=' "$UNIT" | sed 's/^ExecStart=.*ring_test\.py//')"
+    exit 0
+fi
+if [[ $mode == emergency ]]; then
+    if [[ -f $UNIT ]]; then
+        say "Switching the $SERVICE boot service to simulated muons"
+        base=$(grep -m1 '^ExecStart=' "$UNIT" | cut -d= -f2-)
+        [[ -n $base ]] || die "Couldn't read ExecStart from $UNIT. Reinstall it with --install-service."
+        # A drop-in, so the installed service is untouched and --emergency-off just deletes it.
+        # "ExecStart=" clears the original first; later options override earlier ones.
+        sudo mkdir -p "$DROPIN_DIR"
+        sudo tee "$DROPIN" >/dev/null <<DROPIN
+# Added by quickstart.sh --emergency: simulated muons while the trigger is down.
+# Undo with:  ./quickstart.sh --emergency-off
+[Service]
+ExecStart=
+ExecStart=$base --emergency$(systemd_args "$@")
+DROPIN
+        restart_service "EMERGENCY MODE: simulated muons, now and at every boot until --emergency-off"
+        echo "    The faint amber dot in the panel's bottom-right corner means emergency mode is on."
+        echo "    Back to the real trigger:  ./quickstart.sh --emergency-off"
+        exit 0
+    fi
+    # No boot service: set up as usual, then run in the foreground with --emergency.
+    set -- --emergency "$@"
+    mode=run
 fi
 
 # ---- 1. right hardware -----------------------------------------------------------
@@ -152,18 +227,12 @@ fi
 
 if [[ $mode == install ]]; then
     say "Installing the $SERVICE boot service"
-    # systemd's own quoting: plain words as they are, anything else in double quotes.
-    args=""
-    for a in "$@"; do
-        a=${a//%/%%}
-        a=${a//\$/\$\$}
-        if [[ $a =~ ^[A-Za-z0-9._=:/+,%-]+$ ]]; then
-            args+=" $a"
-        else
-            a=${a//\\/\\\\}
-            args+=" \"${a//\"/\\\"}\""
-        fi
-    done
+    args=$(systemd_args "$@")
+    if [[ -f $DROPIN ]]; then
+        sudo rm "$DROPIN"          # it holds the old ExecStart, so it can't outlive a reinstall
+        sudo rmdir "$DROPIN_DIR" 2>/dev/null || true
+        echo "    (emergency mode was on; reinstalling turns it off)"
+    fi
     sudo tee "$UNIT" >/dev/null <<UNIT
 [Unit]
 Description=Muon demo on the LED panel (installed by $PWD/quickstart.sh)

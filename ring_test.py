@@ -48,6 +48,11 @@ its own 5 V supply. Drives the LEDs with Adafruit's Pi 5 PIO driver
 muon, e.g. from an oscilloscope's trigger out. The input is 3.3 V only, so a 5 V signal
 needs a divider first (see README.md). With --preview, the space bar stands in for an edge.
 
+--emergency is the stand-in for a trigger that isn't working: it ignores the trigger
+(even with --listen, and without touching GPIO17) and drops simulated muons at random
+(--rate), each logged as SIMULATED. A faint amber dot on the bottom-right corner LED stays
+on the whole time, so the team can tell at a glance that the muons aren't real.
+
 Run `python3 ring_test.py --preview` on any computer to see the ripples in
 the terminal without a panel attached.
 """
@@ -68,6 +73,7 @@ CENTRE = (N - 1) / 2         # 7.5: ripples land between the 4 middle LEDs
 PITCH = 10.0                 # mm between LEDs
 FPS = 60                     # as the Muon Ripple board
 GAMMA = 2.2                  # display units -> LED drive levels (linear light)
+EMERGENCY_MARK = (28, 10, 0) # --emergency: faint amber on the bottom-right LED, in drive levels
 
 # ---- power model (WS2812B, conservative) ------------------------------------
 MA_PER_CHANNEL = 20.0        # mA per colour channel at 255 (~60 mA per LED at full white)
@@ -656,6 +662,9 @@ def main():
                         "(with --preview, the space bar does)")
     p.add_argument("--trigger-pin", type=int, default=17,
                    help="BCM GPIO number of the --listen input (default 17 = header pin 11; 3.3 V max)")
+    p.add_argument("--emergency", action="store_true",
+                   help="the trigger isn't working: ignore it (even with --listen) and drop simulated "
+                        "muons at random (--rate); a faint amber corner LED shows this mode is on")
     args = p.parse_args()
 
     if args.rate <= 0:
@@ -673,7 +682,10 @@ def main():
     out = TerminalPreview() if args.preview else Panel(args.pin)
     field = Ripples(rng, args.brightness, args.max_amps)
     trigger = None
-    if args.listen:
+    if args.emergency:
+        log(f"EMERGENCY: trigger ignored; simulated muons at random, {args.rate:g} per second on average "
+            "(amber dot in the bottom-right corner while this is on)", out)
+    elif args.listen:
         trigger = Keys() if args.preview else Trigger(args.trigger_pin)
         log("listening: space = a trigger edge, Ctrl+C = quit" if args.preview else
             f"listening for rising edges on GPIO{args.trigger_pin}, Ctrl+C = quit", out)
@@ -699,8 +711,9 @@ def main():
         kind = "" if scheme in ("pumpkin", "soccer") else ("rare" if drop.hot else "typical")
         fit = f" | fitted to {drop.fit:.0%} for the power limit" if drop.fit < 1 else ""
         bright = "" if drop.splat else f" | brightness x{drop.amp:.2f}"   # a splat's colour is fixed
+        simulated = " | SIMULATED" if args.emergency else ""
         log(f"drop {count:4d} | {scheme:13s} | {kind:7s} | "
-            f"{drop.e:5.1f} MeV{bright}{fit}", out)
+            f"{drop.e:5.1f} MeV{bright}{fit}{simulated}", out)
 
     try:
         start = time.monotonic()
@@ -722,6 +735,11 @@ def main():
             if level < 0.99 * args.brightness and now - last_limit_log >= 1.0:
                 log(f"  POWER-LIMITED: dimmed to {level:.0%} to stay under {args.max_amps} A", out)
                 last_limit_log = now
+            if args.emergency:
+                # The marker shows at the same faint level whatever the brightness or power limit.
+                corner = frame[N - 1][N - 1]
+                for k in range(3):
+                    corner[k] = max(corner[k], EMERGENCY_MARK[k] / level)
             out.show(frame, level, args.layout)
             time.sleep(max(0.0, 1.0 / FPS - (time.monotonic() - now)))
     except KeyboardInterrupt:

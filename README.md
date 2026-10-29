@@ -157,6 +157,34 @@ scope ground ──────────────────┴── Pi 
 3.4 V). Keep them between about 1 kΩ and 50 kΩ. The Pi's own pull-down sits across the lower
 resistor and brings the high level down a little, to about 3 V: still a clean high.
 
+### 🚨 Emergency: `--emergency` (trigger not working)
+
+If the trigger isn't working by demo time, switch to **simulated muons** with one command:
+
+```bash
+./quickstart.sh --emergency          # the boot service drops simulated muons from now on
+./quickstart.sh --emergency-off      # back to the real trigger
+```
+
+- With the boot service installed, `--emergency` switches it over and restarts it within a
+  few seconds, and it stays that way through reboots until `--emergency-off`. Your installed
+  options (scheme, brightness and so on) are kept. Anything you add is applied on top, e.g.
+  `./quickstart.sh --emergency --rate 1.7` for the real sea-level rate. The default is the
+  artifact's gallery pace, 0.4 drops per second.
+- Without the boot service, `./quickstart.sh --emergency …` just runs the test that way in
+  the foreground.
+- Simulated muons look exactly like real ones and land at random times, like real muons do.
+  The trigger input is ignored completely and GPIO17 is never touched, so even a broken
+  trigger input or library can't stop the demo.
+- **How the team can tell:** a faint amber dot stays lit on the panel's **bottom-right corner
+  LED** the whole time emergency mode is on. Visitors will take it for a power light. In the
+  log (`journalctl -u muon-demo -f`), every drop ends in `SIMULATED`.
+
+Under the hood, `--emergency` adds a systemd drop-in,
+`/etc/systemd/system/muon-demo.service.d/emergency.conf`, that runs the same command plus
+`--emergency`. `--emergency-off` deletes it. `--install-service` and `--remove-service` clear
+it too.
+
 ## Hardware
 
 - Raspberry Pi 5
@@ -227,6 +255,8 @@ plays at boot.
 | watch the drop log | `journalctl -u muon-demo -f` |
 | stop it until the next boot | `sudo systemctl stop muon-demo` (blanks the panel) |
 | stop running it at boot | `./quickstart.sh --remove-service` |
+| trigger not working: simulated muons | `./quickstart.sh --emergency` (see [Emergency](#-emergency---emergency-trigger-not-working)) |
+| back to the real trigger | `./quickstart.sh --emergency-off` |
 
 While the service is running, `./quickstart.sh` refuses to start a second copy that would
 fight it for the panel. Stop the service first.
@@ -301,6 +331,7 @@ drop    3 | pride         | rare    |  17.2 MeV | brightness x1.60
 | `--layout` | `serpentine` | `progressive` if your panel's rows all run the same way |
 | `--listen` | off | drop a muon on each rising edge on `--trigger-pin`, and none on their own (see above). With `--preview`, the space bar. |
 | `--trigger-pin N` | `17` | BCM GPIO number of the `--listen` input (3.3 V max) |
+| `--emergency` | off | the trigger isn't working: ignore it, even with `--listen`, and drop simulated muons at `--rate`. A faint amber bottom-right LED shows the mode is on. |
 | `--preview` | off | draw the panel in the terminal instead of driving LEDs. Works on any computer. |
 
 Examples:
@@ -316,6 +347,7 @@ python3 ring_test.py --brightness 0.25      # dimmer, to see when light stops ge
 python3 ring_test.py --seed 42              # same drops every time: swap covers and compare
 python3 ring_test.py --preview              # try it out without the panel
 python3 ring_test.py --listen               # one drop per scope trigger on GPIO17
+python3 ring_test.py --listen --emergency   # trigger down: simulated muons instead
 ```
 
 ### Brightness and the power limit
